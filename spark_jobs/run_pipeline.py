@@ -76,6 +76,14 @@ def step_1_ingest_apis():
     except Exception as e:
         print(f"  ✗ Traffic fetch failed: {e}")
 
+    # OSM Data (footways, buildings, trees)
+    try:
+        from ingestion.osm_fetcher import fetch_all
+        osm_paths = fetch_all()
+        print(f"  ✓ OSM Data: downloaded to {list(osm_paths.values())}")
+    except Exception as e:
+        print(f"  ✗ OSM fetch failed: {e}")
+
 
 def step_2_load_osm():
     """Load OSM GeoJSON data into PostGIS."""

@@ -30,11 +30,7 @@ async def get_uhi_hotspots():
                 COUNT(DISTINCT s.segment_id) FILTER (WHERE tcs.tcs_value < 0.4) as critical_segments,
                 COALESCE(AVG(tcs.tcs_value), 0) as avg_city_tcs
             FROM segments s
-            LEFT JOIN LATERAL (
-                SELECT tcs_value FROM thermal_comfort_scores
-                WHERE segment_id = s.segment_id
-                ORDER BY computed_at DESC LIMIT 1
-            ) tcs ON true
+            LEFT JOIN thermal_comfort_scores tcs ON tcs.segment_id = s.segment_id
         """)
 
         # Get hotspot segments (lowest TCS / highest LST)
@@ -46,18 +42,10 @@ async def get_uhi_hotspots():
                 COALESCE(rs.avg_lst, 36.0) as avg_lst,
                 COALESCE(tcs.tcs_value, 0.3) as avg_tcs,
                 COALESCE(tcs.shade_ratio, 0.1) as shade_ratio
-            FROM segments s
-            LEFT JOIN LATERAL (
-                SELECT avg_lst FROM segment_raster_scores
-                WHERE segment_id = s.segment_id
-                ORDER BY computed_at DESC LIMIT 1
-            ) rs ON true
-            LEFT JOIN LATERAL (
-                SELECT tcs_value, shade_ratio FROM thermal_comfort_scores
-                WHERE segment_id = s.segment_id
-                ORDER BY computed_at DESC LIMIT 1
-            ) tcs ON true
-            WHERE tcs.tcs_value IS NOT NULL AND tcs.tcs_value < 0.5
+            FROM thermal_comfort_scores tcs
+            JOIN segments s ON s.segment_id = tcs.segment_id
+            LEFT JOIN segment_raster_scores rs ON rs.segment_id = tcs.segment_id
+            WHERE tcs.tcs_value < 0.5
             ORDER BY tcs.tcs_value ASC
             LIMIT 100
         """)
@@ -104,12 +92,9 @@ async def get_priority_corridors():
                     -- Nearest transit stop name
                     (SELECT t.name FROM transit_stops t
                      ORDER BY t.geom <-> s.geom LIMIT 1) as nearest_transit_name
-                FROM segments s
-                LEFT JOIN LATERAL (
-                    SELECT tcs_value FROM thermal_comfort_scores
-                    WHERE segment_id = s.segment_id
-                    ORDER BY computed_at DESC LIMIT 1
-                ) tcs ON true
+                FROM thermal_comfort_scores tcs
+                JOIN segments s ON s.segment_id = tcs.segment_id
+                WHERE tcs.tcs_value < 0.55
             )
             SELECT
                 COALESCE(name, 'Unnamed ' || highway_type || ' corridor') as corridor_name,
@@ -166,8 +151,8 @@ async def get_walkability_stats():
                     ts.stop_id,
                     ts.name,
                     -- Count comfortable segments within 750m walking distance
-                    (SELECT COUNT(*) FROM segments s
-                     INNER JOIN thermal_comfort_scores tcs ON tcs.segment_id = s.segment_id
+                    (SELECT COUNT(s.segment_id) FROM segments s
+                     JOIN thermal_comfort_scores tcs ON tcs.segment_id = s.segment_id
                      WHERE ST_DWithin(s.geom, ts.geom, 0.007)  -- ~750m
                        AND tcs.tcs_value > 0.5
                     ) as comfortable_paths

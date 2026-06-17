@@ -57,7 +57,7 @@ async def calculate_route(request: RouteRequest):
 async def _find_nearest_node(conn, lng: float, lat: float) -> int | None:
     """Find the nearest pgRouting node to a coordinate."""
     row = await conn.fetchrow("""
-        SELECT id FROM segments_vertices_pgr
+        SELECT id FROM segments_noded_vertices_pgr
         ORDER BY the_geom <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)
         LIMIT 1
     """, lng, lat)
@@ -77,26 +77,25 @@ async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget
         rows = await conn.fetch(f"""
             SELECT
                 r.seq,
-                r.edge as segment_id,
-                s.length_m,
+                sn.old_id as segment_id,
+                ST_Length(sn.geom::geography) as length_m,
                 s.surface_type,
                 COALESCE(tcs.tcs_value, 0.5) as tcs_value,
                 COALESCE(tcs.shade_ratio, 0.2) as shade_ratio,
                 COALESCE(tcs.apparent_temp, 34.0) as apparent_temp,
-                ST_AsGeoJSON(s.geom) as geom_json
+                ST_AsGeoJSON(sn.geom) as geom_json
             FROM pgr_dijkstra(
-                'SELECT segment_id as id, source, target,
-                        {cost_sql} as cost,
-                        {cost_sql} as reverse_cost
-                 FROM segments s
-                 LEFT JOIN LATERAL (
-                     SELECT total_cost FROM edge_weights
-                     WHERE segment_id = s.segment_id
-                     ORDER BY valid_from DESC LIMIT 1
-                 ) ew ON true',
-                $1, $2, directed := false
+                'SELECT sn.id, sn.source::integer, sn.target::integer,
+                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) as cost,
+                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) as reverse_cost
+                 FROM segments_noded sn
+                 JOIN segments s ON sn.old_id = s.segment_id
+                 LEFT JOIN edge_weights ew ON ew.segment_id = sn.old_id
+                 WHERE sn.source IS NOT NULL AND sn.target IS NOT NULL',
+                $1::bigint, $2::bigint, directed := false
             ) r
-            JOIN segments s ON r.edge = s.segment_id
+            JOIN segments_noded sn ON r.edge = sn.id
+            JOIN segments s ON sn.old_id = s.segment_id
             LEFT JOIN LATERAL (
                 SELECT tcs_value, shade_ratio, apparent_temp
                 FROM thermal_comfort_scores
