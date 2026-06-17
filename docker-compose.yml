@@ -38,8 +38,8 @@ services:
       DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
       RAW_DATA_DIR: /app/data/raw
       SPARK_MASTER_URL: "local[*]"
-      TOMTOM_API_KEY: kAt8KJe0rO2jJp1UAYymprJrLtZxHgXZ
-      WAQI_API_TOKEN: e8aab0ef82d9ff8f4247128af4d9390d4809dbc5
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      WAQI_API_TOKEN: ${WAQI_API_TOKEN:-}
       PYSPARK_PYTHON: python3
       SPARK_LOCAL_DIRS: /tmp/spark
     command: ["-m", "spark_jobs.run_pipeline"]
@@ -62,8 +62,8 @@ services:
     environment:
       DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
       ASYNC_DATABASE_URL: postgresql+asyncpg://cc_user:cc_dev_pass@postgres:5432/commute_cool
-      TOMTOM_API_KEY: kAt8KJe0rO2jJp1UAYymprJrLtZxHgXZ
-      WAQI_API_TOKEN: e8aab0ef82d9ff8f4247128af4d9390d4809dbc5
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      WAQI_API_TOKEN: ${WAQI_API_TOKEN:-}
     restart: unless-stopped
 
 volumes:

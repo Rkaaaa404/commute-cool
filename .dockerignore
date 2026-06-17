@@ -11,5 +11,4 @@ docs
 .gitignore
 .dockerignore
 docker-compose.yml
-nginx.conf
 frontend

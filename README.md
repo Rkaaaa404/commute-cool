@@ -173,10 +173,9 @@ commute-cool/
 │   ├── test_normalization.py   # 16 unit tests
 │   ├── test_solar_position.py  # 6 unit tests
 │   └── test_e2e.py             # Integration tests
-├── docker-compose.yml          # 4 services: postgres, spark, api, frontend
+├── docker-compose.yml          # 3 services: postgres, spark, api
 ├── Dockerfile.api              # Python 3.11-slim, FastAPI only
 ├── Dockerfile.spark            # Spark 3.5 + Sedona JARs pre-downloaded
-├── nginx.conf                  # Static serving + API reverse proxy
 ├── requirements.txt            # Full local dev (semua deps dalam 1 file)
 ├── requirements-docker.txt     # Docker: API container only (tanpa PySpark)
 ├── requirements-spark.txt      # Docker: Spark container only (tanpa FastAPI)
@@ -197,7 +196,23 @@ commute-cool/
 - Docker & Docker Compose (untuk PostgreSQL + Spark pipeline + API)
 - Node.js (untuk frontend dev server) — atau bisa pakai `python -m http.server`
 
-### Step 1: Jalankan Backend (Docker)
+### Step 1: Setup Environment Variables
+
+```powershell
+copy .env.example .env
+```
+
+Edit `.env` dan isi API keys:
+```
+TOMTOM_API_KEY=your_tomtom_key_here
+WAQI_API_TOKEN=your_waqi_token_here
+```
+
+Kedua API gratis (free tier). Register di:
+- TomTom: https://developer.tomtom.com/
+- WAQI: https://aqicn.org/data-platform/token/
+
+### Step 2: Jalankan Backend (Docker)
 
 ```powershell
 docker compose up --build
@@ -210,7 +225,7 @@ Ini menjalankan 3 services:
 
 Tunggu sampai `spark-pipeline` exit (data sudah masuk DB), lalu API siap serve data.
 
-### Step 2: Jalankan Frontend (Lokal)
+### Step 3: Jalankan Frontend (Lokal)
 
 ```powershell
 cd frontend
