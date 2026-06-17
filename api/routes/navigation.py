@@ -54,7 +54,7 @@ async def calculate_route(request: RouteRequest):
                 COALESCE(tcs.shade_ratio, 0.2) as shade_ratio,
                 COALESCE(tcs.apparent_temp, 34.0) as apparent_temp,
                 COALESCE(ew.total_cost, COALESCE(s.length_m, 50) * 1.5) as total_cost,
-                ST_AsGeoJSON(s.geom)::json as geom_json,
+                ST_AsGeoJSON(s.geom) as geom_json,
                 ST_X(ST_StartPoint(s.geom)) as start_lng,
                 ST_Y(ST_StartPoint(s.geom)) as start_lat,
                 ST_X(ST_EndPoint(s.geom)) as end_lng,
@@ -251,27 +251,28 @@ def _build_route(segments: list[dict], route_type: str, budget_limit: float) -> 
         geom = s["geom"]
         if isinstance(geom, str):
             geom = json.loads(geom)
-        if geom and "coordinates" in geom:
-            coords = geom["coordinates"]
-            if all_coords:
-                # Check if we need to reverse this segment to connect
-                last = all_coords[-1]
-                first_of_seg = coords[0]
-                last_of_seg = coords[-1]
+        if not geom or "coordinates" not in geom:
+            continue
+        coords = geom["coordinates"]
+        if all_coords:
+            # Check if we need to reverse this segment to connect
+            last = all_coords[-1]
+            first_of_seg = coords[0]
+            last_of_seg = coords[-1]
 
-                d_forward = ((last[0] - first_of_seg[0])**2 + (last[1] - first_of_seg[1])**2)
-                d_reverse = ((last[0] - last_of_seg[0])**2 + (last[1] - last_of_seg[1])**2)
+            d_forward = ((last[0] - first_of_seg[0])**2 + (last[1] - first_of_seg[1])**2)
+            d_reverse = ((last[0] - last_of_seg[0])**2 + (last[1] - last_of_seg[1])**2)
 
-                if d_reverse < d_forward:
-                    coords = list(reversed(coords))
+            if d_reverse < d_forward:
+                coords = list(reversed(coords))
 
-                # Skip first point if it's very close to last (avoid duplication)
-                if len(coords) > 0:
-                    d = ((last[0] - coords[0][0])**2 + (last[1] - coords[0][1])**2)
-                    if d < 0.0000001:
-                        coords = coords[1:]
+            # Skip first point if it's very close to last (avoid duplication)
+            if len(coords) > 0:
+                d = ((last[0] - coords[0][0])**2 + (last[1] - coords[0][1])**2)
+                if d < 0.0000001:
+                    coords = coords[1:]
 
-            all_coords.extend(coords)
+        all_coords.extend(coords)
 
     segment_details = [
         {
@@ -319,7 +320,7 @@ def _empty_response(budget_limit: float) -> RouteResponse:
     )
 
 
-@router.get("/segments/thermal", response_model=list[ThermalSegment])
+@router.get("/segments/thermal")
 async def get_thermal_segments():
     """Get all segments with current TCS values for heatmap overlay."""
     async with get_conn() as conn:
@@ -327,7 +328,7 @@ async def get_thermal_segments():
             SELECT
                 s.segment_id,
                 tcs.tcs_value,
-                ST_AsGeoJSON(s.geom)::json as geometry
+                ST_AsGeoJSON(s.geom) as geometry
             FROM segments s
             INNER JOIN LATERAL (
                 SELECT tcs_value
@@ -344,7 +345,7 @@ async def get_thermal_segments():
         {
             "segment_id": row["segment_id"],
             "tcs_value": round(row["tcs_value"], 3),
-            "geometry": row["geometry"],
+            "geometry": json.loads(row["geometry"]) if isinstance(row["geometry"], str) else row["geometry"],
         }
         for row in rows
     ]

@@ -1,5 +1,6 @@
 """Dashboard API routes - Government analytics with real PostGIS data."""
 
+import json
 from fastapi import APIRouter
 
 from api.models.schemas import (
@@ -41,7 +42,7 @@ async def get_uhi_hotspots():
             SELECT
                 s.segment_id,
                 s.name,
-                ST_AsGeoJSON(s.geom)::json as geometry,
+                ST_AsGeoJSON(s.geom) as geometry,
                 COALESCE(rs.avg_lst, 36.0) as avg_lst,
                 COALESCE(tcs.tcs_value, 0.3) as avg_tcs,
                 COALESCE(tcs.shade_ratio, 0.1) as shade_ratio
@@ -64,7 +65,7 @@ async def get_uhi_hotspots():
     hotspots = [
         UHIHotspot(
             segment_id=row["segment_id"],
-            geometry=row["geometry"],
+            geometry=json.loads(row["geometry"]) if isinstance(row["geometry"], str) else row["geometry"],
             avg_lst=round(row["avg_lst"], 1),
             avg_tcs=round(row["avg_tcs"], 3),
             street_name=row["name"],
