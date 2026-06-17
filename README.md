@@ -136,36 +136,40 @@ TOMTOM_API_KEY=your_key
 WAQI_API_TOKEN=your_token
 ```
 
-### Step 2: Jalankan Backend (Docker)
+### Step 2: Jalankan Backend & Database (Docker)
 
+Buka terminal di root folder, lalu jalankan:
 ```powershell
-docker compose up --build
+docker compose up -d --build
 ```
 
-Services:
-- **postgres** -- PostgreSQL + PostGIS + pgRouting, auto-init schema
-- **spark-pipeline** -- Fetch API data, load OSM, build topology, run 5 Spark jobs, exit
-- **api** -- FastAPI on http://localhost:8000
+**⚠️ PENTING UNTUK CLONE PERTAMA KALI (FIRST TIME SETUP):**
+Saat pertama kali dijalankan, sistem tidak memiliki data. Kontainer `spark-pipeline` akan mengunduh jalanan Surabaya dari OpenStreetMap, memotong-motongnya menjadi 105.000 titik persimpangan (*node topology*), dan menghitung nilai *Thermal Comfort Score* (TCS) masing-masing jalan.
+- Proses ini memakan waktu sekitar **10-15 menit** (tergantung koneksi dan CPU).
+- Anda bisa melihat progress-nya dengan command: `docker logs -f commute_cool_spark`
+- Tunggu hingga kontainer `spark-pipeline` selesai dan berstatus `exited (0)`.
 
-Tunggu spark-pipeline selesai (exit 0). Pertama kali butuh 5-10 menit.
+**💡 UNTUK PENGGUNAAN SELANJUTNYA:**
+Karena sistem menggunakan *Persistent Volume* (`pgdata`), data rute yang sudah di-generate **tidak akan hilang**. Besoknya, Anda tidak perlu menunggu 15 menit lagi. Cukup ketik `docker compose up -d` dan API akan menyala dalam hitungan detik.
 
-### Step 3: Jalankan Frontend
+### Step 3: Verifikasi API & Database
 
+Pastikan data rute dan panas sudah berhasil masuk ke database:
+```powershell
+docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT COUNT(*) FROM thermal_comfort_scores;"
+```
+*(Harus menampilkan angka > 105000)*
+
+### Step 4: Jalankan Frontend (Next.js)
+
+Buka terminal baru, pindah ke folder frontend:
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-Buka http://localhost:3000
-
-### Verifikasi Data
-
-```powershell
-docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT COUNT(*) FROM thermal_comfort_scores;"
-```
-
-Harus > 0 setelah pipeline selesai.
+Buka browser Anda di: `http://localhost:3000`
 
 ---
 
