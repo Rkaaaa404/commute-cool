@@ -26,7 +26,7 @@ Fitur utama:
 | Processing | Apache Spark 3.5 (PySpark) + Apache Sedona 1.6 (local mode) |
 | Database | PostgreSQL 15 + PostGIS 3.3 |
 | Backend API | FastAPI + asyncpg (async, no ORM overhead) |
-| Frontend | MapLibre GL JS 4.7 (3D buildings) + OpenFreeMap |
+| Frontend | React 18 + Mantine UI + Vite + MapLibre GL JS (3D) |
 | Routing Engine | GraphHopper (custom thermal weighting) |
 | CCTV Streaming | HLS.js + Dishub Surabaya streams |
 | Deployment | Docker Compose (4 services, satu perintah) |
@@ -149,16 +149,24 @@ commute-cool/
 │   ├── personal_budget.py      # Heat budget validation
 │   └── alert_rerouter.py       # Weather alert blocking
 ├── frontend/
-│   ├── navigation/             # User-facing navigation app
-│   │   ├── index.html          # MapLibre 3D + route UI + heatmap toggle
-│   │   ├── map.js              # Map logic + TCS heatmap overlay + gradient routes
-│   │   ├── route-panel.js      # Route comparison panel
-│   │   ├── cctv-preview.js     # Live CCTV modal (HLS.js)
-│   │   └── styles.css
-│   └── dashboard/              # Government analytics dashboard
-│       ├── index.html          # UHI map + charts + corridors + CCTV monitor
-│       ├── dashboard.js        # Charts, maps, API integration
-│       └── dashboard.css
+│   ├── package.json            # React + Vite + Mantine + MapLibre
+│   ├── vite.config.ts          # Dev server on :3000
+│   ├── src/
+│   │   ├── main.tsx            # Entry: MantineProvider + App
+│   │   ├── App.tsx             # Navigation/Dashboard tabs
+│   │   ├── pages/
+│   │   │   ├── NavigationPage.tsx  # Map + search + route + CCTV
+│   │   │   └── DashboardPage.tsx   # Stats + corridor table
+│   │   ├── components/
+│   │   │   ├── MapView.tsx     # MapLibre GL + heatmap + 3D buildings
+│   │   │   ├── SearchPanel.tsx # Origin/destination + tolerance
+│   │   │   ├── RoutePanel.tsx  # Route cards + TCS progress bar
+│   │   │   └── CCTVModal.tsx   # HLS stream modal (Mantine Modal)
+│   │   ├── services/
+│   │   │   └── api.ts          # All API calls typed
+│   │   └── types/
+│   │       └── index.ts        # TypeScript interfaces
+│   └── index.html
 ├── database/
 │   ├── init.sql                # Full PostGIS schema (all tables + indexes)
 │   └── seed_transit.sql        # Halte/stasiun Surabaya
@@ -229,13 +237,16 @@ Tunggu sampai `spark-pipeline` exit (data sudah masuk DB), lalu API siap serve d
 
 ```powershell
 cd frontend
-npx live-server --port=3000 --cors --open=/navigation/
+npm install
+npm run dev
 ```
 
-Atau tanpa Node.js:
-```powershell
-python -m http.server 3000 --directory frontend
-```
+Buka http://localhost:3000 — Vite dev server dengan hot reload.
+
+| Tab | Fungsi |
+|-----|--------|
+| Navigasi | MapLibre 3D + heatmap + route + CCTV |
+| Dashboard | Statistik kota + koridor penghijauan |
 
 ### Akses
 
