@@ -86,6 +86,25 @@ def step_2_load_osm():
     from ingestion.osm_loader import load_all
     load_all()
 
+    # Build pgRouting topology
+    print("  Building routing topology (pgRouting)...")
+    try:
+        import psycopg2
+        db_url = os.getenv("DATABASE_URL", "postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool")
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("SELECT build_routing_topology();")
+        conn.commit()
+        # Check how many nodes were created
+        cur.execute("SELECT COUNT(*) FROM segments_vertices_pgr")
+        node_count = cur.fetchone()[0]
+        print(f"  Topology built: {node_count} nodes")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"  Topology build failed: {e}")
+        print("  Routing will fall back to nearest-segment approach")
+
 
 def step_3_ndvi_lst():
     """Run NDVI/LST estimation (can use API-based estimator for speed, or Spark job)."""

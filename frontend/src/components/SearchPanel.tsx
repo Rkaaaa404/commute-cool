@@ -18,13 +18,20 @@ interface Props {
 // Simple geocoder using Nominatim (free, no key needed)
 async function geocodeLocation(query: string): Promise<Coordinate | null> {
   try {
-    const bounded = `${query}, Surabaya`;
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(bounded)}&viewbox=112.60,-7.35,112.85,-7.20&bounded=1&limit=1`
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&viewbox=112.60,-7.20,112.85,-7.35&bounded=1&limit=5&countrycodes=id`
     );
     const data = await res.json();
     if (data.length > 0) {
       return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+    }
+    // Retry without bounds (wider search with Surabaya appended)
+    const res2 = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Surabaya')}&limit=3&countrycodes=id`
+    );
+    const data2 = await res2.json();
+    if (data2.length > 0) {
+      return { lat: parseFloat(data2[0].lat), lng: parseFloat(data2[0].lon) };
     }
   } catch { /* ignore */ }
   return null;

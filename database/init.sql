@@ -3,8 +3,9 @@
 -- PostgreSQL + PostGIS
 -- ============================================================
 
--- Enable PostGIS extension
+-- Enable extensions
 CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS pgrouting;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
@@ -21,11 +22,15 @@ CREATE TABLE segments (
     smoothness      VARCHAR(50),
     sidewalk_width  DOUBLE PRECISION,
     has_shade_tree  BOOLEAN DEFAULT FALSE,
+    source          INTEGER,
+    target          INTEGER,
     created_at      TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_segments_geom ON segments USING GIST (geom);
 CREATE INDEX idx_segments_highway ON segments (highway_type);
+CREATE INDEX idx_segments_source ON segments (source);
+CREATE INDEX idx_segments_target ON segments (target);
 
 -- ============================================================
 -- TABEL: Bangunan (untuk shadow modeling)
@@ -172,3 +177,27 @@ CREATE TABLE cctv_cameras (
 
 CREATE INDEX idx_cctv_geom ON cctv_cameras USING GIST (geom);
 CREATE INDEX idx_cctv_active ON cctv_cameras (is_active) WHERE is_active = TRUE;
+
+
+-- ============================================================
+-- pgRouting: Network Topology Builder
+-- Run after segments are loaded to build routing graph
+-- ============================================================
+CREATE OR REPLACE FUNCTION build_routing_topology() RETURNS void AS $$
+BEGIN
+    -- Create topology (nodes at segment endpoints)
+    PERFORM pgr_createTopology(
+        'segments',
+        0.0001,          -- tolerance (~11m for snapping endpoints)
+        'geom',
+        'segment_id',
+        'source',
+        'target'
+    );
+
+    -- Analyze topology for connectivity
+    PERFORM pgr_analyzeGraph('segments', 0.0001, 'geom', 'segment_id');
+
+    RAISE NOTICE 'Routing topology built successfully';
+END;
+$$ LANGUAGE plpgsql;

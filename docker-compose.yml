@@ -3,7 +3,7 @@ services:
   # PostgreSQL + PostGIS Database
   # ============================================================
   postgres:
-    image: postgis/postgis:15-3.3
+    image: pgrouting/pgrouting:15-3.3-3.6.1
     container_name: commute_cool_db
     ports:
       - "5432:5432"
