@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import maplibregl from 'maplibre-gl';
 import type { Coordinate, RouteResponse } from '../types';
 import { fetchThermalSegments } from '../services/api';
@@ -18,8 +18,10 @@ export default function MapView({ origin, destination, routeData, onMapClick }: 
   const mapRef = useRef<maplibregl.Map | null>(null);
   const originMarkerRef = useRef<maplibregl.Marker | null>(null);
   const destMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const onMapClickRef = useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
 
-  // Initialize map
+  // Initialize map once
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -35,6 +37,10 @@ export default function MapView({ origin, destination, routeData, onMapClick }: 
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: false,
+    }), 'bottom-right');
 
     map.on('load', () => {
       addBuildings(map);
@@ -42,28 +48,26 @@ export default function MapView({ origin, destination, routeData, onMapClick }: 
     });
 
     map.on('click', (e) => {
-      onMapClick({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      onMapClickRef.current({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
 
     map.getCanvas().style.cursor = 'crosshair';
     mapRef.current = map;
 
-    return () => { map.remove(); mapRef.current = null; };
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
   }, []);
-
-  // Update click handler ref
-  const onMapClickRef = useRef(onMapClick);
-  onMapClickRef.current = onMapClick;
 
   // Update origin marker
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
     originMarkerRef.current?.remove();
     if (origin) {
       const el = document.createElement('div');
-      el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#457b9d;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+      el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#457b9d;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
       originMarkerRef.current = new maplibregl.Marker({ element: el })
         .setLngLat([origin.lng, origin.lat])
         .addTo(map);
@@ -74,11 +78,10 @@ export default function MapView({ origin, destination, routeData, onMapClick }: 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
     destMarkerRef.current?.remove();
     if (destination) {
       const el = document.createElement('div');
-      el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#e63946;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);';
+      el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#e63946;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
       destMarkerRef.current = new maplibregl.Marker({ element: el })
         .setLngLat([destination.lng, destination.lat])
         .addTo(map);
@@ -88,46 +91,55 @@ export default function MapView({ origin, destination, routeData, onMapClick }: 
   // Display routes
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
 
-    // Remove old routes
-    ['route-0', 'route-1'].forEach(id => {
-      if (map.getLayer(id)) map.removeLayer(id);
-      if (map.getSource(id)) map.removeSource(id);
-    });
-
-    if (!routeData) return;
-
-    routeData.routes.forEach((route, i) => {
-      if (!route.geometry?.coordinates?.length) return;
-      const id = `route-${i}`;
-      const isComfy = route.type === 'most_comfortable';
-
-      map.addSource(id, {
-        type: 'geojson',
-        data: { type: 'Feature', geometry: route.geometry, properties: {} },
+    // Wait for style to be loaded
+    const applyRoutes = () => {
+      ['route-0', 'route-1'].forEach(id => {
+        if (map.getLayer(id)) map.removeLayer(id);
+        if (map.getSource(id)) map.removeSource(id);
       });
 
-      map.addLayer({
-        id,
-        type: 'line',
-        source: id,
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: {
-          'line-color': isComfy ? '#1a936f' : '#457b9d',
-          'line-width': isComfy ? 6 : 4,
-          'line-opacity': isComfy ? 0.9 : 0.6,
-        },
-      });
-    });
+      if (!routeData) return;
 
-    // Fit bounds
-    if (origin && destination) {
-      map.fitBounds(
-        [[Math.min(origin.lng, destination.lng) - 0.005, Math.min(origin.lat, destination.lat) - 0.005],
-         [Math.max(origin.lng, destination.lng) + 0.005, Math.max(origin.lat, destination.lat) + 0.005]],
-        { padding: 80, pitch: 40 }
-      );
+      routeData.routes.forEach((route, i) => {
+        if (!route.geometry?.coordinates?.length) return;
+        const id = `route-${i}`;
+        const isComfy = route.type === 'most_comfortable';
+
+        map.addSource(id, {
+          type: 'geojson',
+          data: { type: 'Feature', geometry: route.geometry, properties: {} },
+        });
+
+        map.addLayer({
+          id,
+          type: 'line',
+          source: id,
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': isComfy ? '#1a936f' : '#457b9d',
+            'line-width': isComfy ? 7 : 4,
+            'line-opacity': isComfy ? 0.9 : 0.6,
+          },
+        });
+      });
+
+      if (origin && destination) {
+        map.fitBounds(
+          [
+            [Math.min(origin.lng, destination.lng) - 0.005, Math.min(origin.lat, destination.lat) - 0.005],
+            [Math.max(origin.lng, destination.lng) + 0.005, Math.max(origin.lat, destination.lat) + 0.005],
+          ],
+          { padding: 80, pitch: 40 }
+        );
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      applyRoutes();
+    } else {
+      map.once('load', applyRoutes);
     }
   }, [routeData, origin, destination]);
 
@@ -137,7 +149,7 @@ export default function MapView({ origin, destination, routeData, onMapClick }: 
 function addBuildings(map: maplibregl.Map) {
   if (!map.getSource('openmaptiles')) return;
   const layers = map.getStyle().layers || [];
-  const labelLayer = layers.find(l => l.type === 'symbol' && l.layout?.['text-field']);
+  const labelLayer = layers.find(l => l.type === 'symbol' && (l as any).layout?.['text-field']);
 
   map.addLayer({
     id: '3d-buildings',
@@ -155,54 +167,69 @@ function addBuildings(map: maplibregl.Map) {
 }
 
 async function loadHeatmap(map: maplibregl.Map) {
-  const segments = await fetchThermalSegments();
-  if (!segments.length) return;
+  try {
+    const segments = await fetchThermalSegments();
+    if (!segments.length) {
+      console.log('[Heatmap] No thermal data available');
+      return;
+    }
 
-  const geojson = {
-    type: 'FeatureCollection' as const,
-    features: segments.map(seg => ({
-      type: 'Feature' as const,
-      geometry: seg.geometry,
-      properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
-    })),
-  };
+    console.log(`[Heatmap] Loading ${segments.length} segments`);
 
-  map.addSource('thermal', { type: 'geojson', data: geojson });
+    const geojson: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: segments.map(seg => ({
+        type: 'Feature' as const,
+        geometry: seg.geometry,
+        properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
+      })),
+    };
 
-  map.addLayer({
-    id: 'thermal-glow',
-    type: 'line',
-    source: 'thermal',
-    paint: {
-      'line-color': ['interpolate', ['linear'], ['get', 'tcs'], 0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 12],
-      'line-opacity': 0.3,
-      'line-blur': 3,
-    },
-  });
+    map.addSource('thermal', { type: 'geojson', data: geojson });
 
-  map.addLayer({
-    id: 'thermal-line',
-    type: 'line',
-    source: 'thermal',
-    paint: {
-      'line-color': ['interpolate', ['linear'], ['get', 'tcs'], 0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 4],
-      'line-opacity': 0.8,
-    },
-  });
+    // Glow layer
+    map.addLayer({
+      id: 'thermal-glow',
+      type: 'line',
+      source: 'thermal',
+      paint: {
+        'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
+          0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 12],
+        'line-opacity': 0.3,
+        'line-blur': 3,
+      },
+    });
 
-  map.on('click', 'thermal-line', (e) => {
-    const props = e.features?.[0]?.properties;
-    if (!props) return;
-    const tcs = Number(props.tcs).toFixed(2);
-    const label = Number(tcs) >= 0.7 ? 'Nyaman' : Number(tcs) >= 0.4 ? 'Sedang' : 'Panas';
-    new maplibregl.Popup({ closeOnClick: true })
-      .setLngLat(e.lngLat)
-      .setHTML(`<div style="font-size:12px"><b>TCS: ${tcs}</b><br/><span style="color:#666">${label}</span></div>`)
-      .addTo(map);
-  });
+    // Crisp layer
+    map.addLayer({
+      id: 'thermal-line',
+      type: 'line',
+      source: 'thermal',
+      paint: {
+        'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
+          0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 5],
+        'line-opacity': 0.75,
+      },
+    });
 
-  map.on('mouseenter', 'thermal-line', () => { map.getCanvas().style.cursor = 'pointer'; });
-  map.on('mouseleave', 'thermal-line', () => { map.getCanvas().style.cursor = 'crosshair'; });
+    // Click popup
+    map.on('click', 'thermal-line', (e) => {
+      const props = e.features?.[0]?.properties;
+      if (!props) return;
+      const tcs = Number(props.tcs).toFixed(2);
+      const label = Number(tcs) >= 0.7 ? 'Nyaman' : Number(tcs) >= 0.4 ? 'Sedang' : 'Panas';
+      const color = Number(tcs) >= 0.7 ? '#1a936f' : Number(tcs) >= 0.4 ? '#f4a261' : '#e63946';
+      new maplibregl.Popup({ closeOnClick: true })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div style="font-size:12px;font-family:Inter,sans-serif"><b style="color:${color}">TCS: ${tcs}</b><br/><span style="color:#666">${label}</span></div>`)
+        .addTo(map);
+    });
+
+    map.on('mouseenter', 'thermal-line', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'thermal-line', () => { map.getCanvas().style.cursor = 'crosshair'; });
+  } catch (err) {
+    console.error('[Heatmap] Failed to load:', err);
+  }
 }

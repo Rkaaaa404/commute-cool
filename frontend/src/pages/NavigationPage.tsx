@@ -26,26 +26,32 @@ export default function NavigationPage() {
     }
   }, [clickMode]);
 
+  const handleSetOrigin = useCallback((coord: Coordinate) => {
+    setOrigin(coord);
+    setClickMode('destination');
+  }, []);
+
+  const handleSetDestination = useCallback((coord: Coordinate) => {
+    setDestination(coord);
+    setClickMode('origin');
+  }, []);
+
   const handleSearch = useCallback(async () => {
     if (!origin || !destination) return;
     setLoading(true);
     try {
       const data = await fetchRoute(origin, destination, tolerance);
       setRouteData(data);
-    } catch (err) {
+    } catch {
       notifications.show({
         title: 'Error',
-        message: 'Gagal menghitung rute. Pastikan backend berjalan.',
+        message: 'Gagal menghitung rute. Pastikan backend berjalan di localhost:8000.',
         color: 'red',
       });
     } finally {
       setLoading(false);
     }
   }, [origin, destination, tolerance]);
-
-  const handleClearRoute = useCallback(() => {
-    setRouteData(null);
-  }, []);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -61,12 +67,15 @@ export default function NavigationPage() {
         tolerance={tolerance}
         onToleranceChange={setTolerance}
         onSearch={handleSearch}
+        onSetOrigin={handleSetOrigin}
+        onSetDestination={handleSetDestination}
         loading={loading}
+        clickMode={clickMode}
       />
       {routeData && (
         <RoutePanel
           routeData={routeData}
-          onClose={handleClearRoute}
+          onClose={() => setRouteData(null)}
           onCCTVClick={setCctvModal}
         />
       )}
