@@ -183,13 +183,38 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
         });
       });
 
-      if (origin && destination) {
+      // Fit map to route bounds instead of just origin/destination
+      if (routeData.routes.length > 0) {
+        let minLng = 180, maxLng = -180, minLat = 90, maxLat = -90;
+        routeData.routes.forEach(route => {
+          if (route.geometry?.coordinates) {
+            route.geometry.coordinates.forEach(([lng, lat]) => {
+              if (lng < minLng) minLng = lng;
+              if (lng > maxLng) maxLng = lng;
+              if (lat < minLat) minLat = lat;
+              if (lat > maxLat) maxLat = lat;
+            });
+          }
+        });
+
+        // Add small buffer if the min/max are identical (very short route)
+        if (minLng === maxLng) { minLng -= 0.001; maxLng += 0.001; }
+        if (minLat === maxLat) { minLat -= 0.001; maxLat += 0.001; }
+
+        map.fitBounds(
+          [
+            [minLng, minLat],
+            [maxLng, maxLat],
+          ],
+          { padding: {top: 80, bottom: 80, left: 380, right: 80}, maxZoom: 16 }
+        );
+      } else if (origin && destination) {
         map.fitBounds(
           [
             [Math.min(origin.lng, destination.lng) - 0.005, Math.min(origin.lat, destination.lat) - 0.005],
             [Math.max(origin.lng, destination.lng) + 0.005, Math.max(origin.lat, destination.lat) + 0.005],
           ],
-          { padding: {top: 80, bottom: 350, left: 80, right: 80}, pitch: 40 }
+          { padding: {top: 80, bottom: 80, left: 380, right: 80}, maxZoom: 16 }
         );
       }
 

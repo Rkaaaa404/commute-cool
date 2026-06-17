@@ -118,7 +118,7 @@ function RouteCard({
       {isSelected && (
         <div style={{ marginTop: 12 }}>
           <Divider mb="xs" label="Detail per Segmen Jalan" labelPosition="center" />
-          <ScrollArea h={160} type="hover" offsetScrollbars>
+          <ScrollArea h={200} type="hover" offsetScrollbars>
             {route.segments.length > 0
               ? route.segments.map((seg, i) => <SegmentItem key={i} seg={seg} />)
               : <Text size="xs" c="dimmed" ta="center" mt="sm">Detail segmen belum tersedia.</Text>
@@ -136,20 +136,17 @@ export default function RoutePanel({ routeData, selectedRouteType, onSelectRoute
 
   return (
     <Paper
-      shadow="xl"
+      shadow="md"
       radius="lg"
       p="md"
       style={{
-        position: 'absolute',
-        bottom: 12,
-        left: 12,
-        width: 390,
-        maxHeight: '65vh',
+        width: '100%',
         display: 'flex',
         flexDirection: 'column',
         zIndex: 10,
-        background: 'rgba(255,255,255,0.97)',
-        backdropFilter: 'blur(8px)',
+        background: '#fcfaf6',
+        flex: 1,
+        minHeight: 0
       }}
     >
       <Group justify="space-between" mb="sm" align="flex-start" wrap="nowrap">

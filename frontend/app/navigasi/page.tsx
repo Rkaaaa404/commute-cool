@@ -102,27 +102,44 @@ export default function NavigationPage() {
         {clickMode === 'origin' ? '📍 Mode Pilih Titik Awal' : '🎯 Mode Pilih Tujuan'}
       </div>
 
-      <SearchPanel
-        origin={origin}
-        destination={destination}
-        tolerance={tolerance}
-        onToleranceChange={setTolerance}
-        onSearch={handleSearch}
-        onSetOrigin={handleSetOrigin}
-        onSetDestination={handleSetDestination}
-        loading={loading}
-        clickMode={clickMode}
-        onLocateGPS={handleLocateGPS}
-      />
-      {routeData && (
-        <RoutePanel
-          routeData={routeData}
-          selectedRouteType={selectedRouteType}
-          onSelectRoute={setSelectedRouteType}
-          onClose={() => setRouteData(null)}
-          onCCTVClick={setCctvModal}
-        />
-      )}
+      <div style={{
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        width: 340,
+        zIndex: 50,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        maxHeight: 'calc(100vh - 24px)',
+        pointerEvents: 'none' // allow clicking map through the gap
+      }}>
+        <div style={{ pointerEvents: 'auto' }}>
+          <SearchPanel
+            origin={origin}
+            destination={destination}
+            tolerance={tolerance}
+            onToleranceChange={setTolerance}
+            onSearch={handleSearch}
+            onSetOrigin={handleSetOrigin}
+            onSetDestination={handleSetDestination}
+            loading={loading}
+            clickMode={clickMode}
+            onLocateGPS={handleLocateGPS}
+          />
+        </div>
+        {routeData && (
+          <div style={{ pointerEvents: 'auto', display: 'flex', minHeight: 0 }}>
+            <RoutePanel
+              routeData={routeData}
+              selectedRouteType={selectedRouteType}
+              onSelectRoute={(type) => setSelectedRouteType(prev => prev === type ? null : type)}
+              onClose={() => setRouteData(null)}
+              onCCTVClick={setCctvModal}
+            />
+          </div>
+        )}
+      </div>
       <CCTVModal
         camera={cctvModal}
         onClose={() => setCctvModal(null)}

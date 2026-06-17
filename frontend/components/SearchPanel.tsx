@@ -153,7 +153,7 @@ export default function SearchPanel({
       shadow="md"
       radius="lg"
       p="md"
-      style={{ position: 'absolute', top: 12, left: 12, width: 340, zIndex: 50 }}
+      style={{ width: '100%', background: '#fcfaf6', zIndex: 50 }}
     >
       <Stack gap="xs">
         {weather && (
