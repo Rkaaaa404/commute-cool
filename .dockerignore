@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.pytest_cache
+__pycache__
+*.pyc
+.kiro
+notebooks
+docs
+*.md
+.gitignore
+.dockerignore
+docker-compose.yml
+nginx.conf
+frontend

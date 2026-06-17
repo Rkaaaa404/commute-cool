@@ -1,0 +1,10 @@
+{
+  "name": "commute-cool-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "COMMUTE-COOL Navigation & Dashboard Frontend",
+  "scripts": {
+    "dev": "npx live-server --port=3000 --cors --open=/navigation/",
+    "start": "npx serve -l 3000"
+  }
+}

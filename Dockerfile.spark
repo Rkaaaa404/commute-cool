@@ -1,0 +1,33 @@
+FROM apache/spark:3.5.3-python3
+
+USER root
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (upgrade pip first to fix timeout issues on slow networks)
+COPY requirements-spark.txt /tmp/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --default-timeout=300 -r /tmp/requirements.txt
+
+# Download Spark JARs (Sedona + PostgreSQL JDBC) ahead of time
+RUN mkdir -p /opt/spark/jars && \
+    curl -sL https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar \
+        -o /opt/spark/jars/postgresql-42.7.3.jar && \
+    curl -sL https://repo1.maven.org/maven2/org/apache/sedona/sedona-spark-shaded-3.5_2.12/1.6.0/sedona-spark-shaded-3.5_2.12-1.6.0.jar \
+        -o /opt/spark/jars/sedona-spark-shaded-3.5_2.12-1.6.0.jar && \
+    curl -sL https://repo1.maven.org/maven2/org/datasketches/datasketches-java/6.0.0/datasketches-java-6.0.0.jar \
+        -o /opt/spark/jars/datasketches-java-6.0.0.jar
+
+# Copy application code
+WORKDIR /app
+COPY spark_jobs/ ./spark_jobs/
+COPY ingestion/ ./ingestion/
+COPY data/ ./data/
+
+ENV PYTHONPATH=/app
+ENV PYSPARK_PYTHON=python3
+
+ENTRYPOINT ["python3"]

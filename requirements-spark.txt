@@ -1,0 +1,23 @@
+# ============================================================
+# COMMUTE-COOL Spark Container Dependencies
+# ============================================================
+
+# --- PySpark & Sedona ---
+pyspark==3.5.1
+apache-sedona==1.6.0
+
+# --- Geospatial ---
+shapely==2.0.4
+pyproj==3.5.0
+numpy==1.24.4
+
+# --- Database ---
+psycopg2-binary==2.9.9
+
+# --- Solar position ---
+pvlib==0.10.4
+pandas==2.0.3
+
+# --- API ingestion (for fetching weather/AQI/traffic before processing) ---
+requests==2.32.3
+python-dotenv==1.0.1

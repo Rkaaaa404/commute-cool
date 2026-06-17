@@ -1,0 +1,71 @@
+services:
+  # ============================================================
+  # PostgreSQL + PostGIS Database
+  # ============================================================
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: commute_cool_db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: commute_cool
+      POSTGRES_USER: cc_user
+      POSTGRES_PASSWORD: cc_dev_pass
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./database/seed_transit.sql:/docker-entrypoint-initdb.d/02_seed_transit.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cc_user -d commute_cool"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ============================================================
+  # Apache Spark Pipeline (Local Mode)
+  # Runs: Ingestion (real APIs) → 5 Spark Jobs → Data in PostGIS
+  # One-shot: exits after pipeline completes
+  # ============================================================
+  spark-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: commute_cool_spark
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
+      RAW_DATA_DIR: /app/data/raw
+      SPARK_MASTER_URL: "local[*]"
+      TOMTOM_API_KEY: kAt8KJe0rO2jJp1UAYymprJrLtZxHgXZ
+      WAQI_API_TOKEN: e8aab0ef82d9ff8f4247128af4d9390d4809dbc5
+      PYSPARK_PYTHON: python3
+      SPARK_LOCAL_DIRS: /tmp/spark
+    command: ["-m", "spark_jobs.run_pipeline"]
+    volumes:
+      - spark_data:/app/data
+
+  # ============================================================
+  # FastAPI Backend (connects to real PostGIS data)
+  # ============================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: commute_cool_api
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
+      ASYNC_DATABASE_URL: postgresql+asyncpg://cc_user:cc_dev_pass@postgres:5432/commute_cool
+      TOMTOM_API_KEY: kAt8KJe0rO2jJp1UAYymprJrLtZxHgXZ
+      WAQI_API_TOKEN: e8aab0ef82d9ff8f4247128af4d9390d4809dbc5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  spark_data:

@@ -1,0 +1,73 @@
+# ============================================================
+# COMMUTE-COOL .gitignore
+# ============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# --- Virtual Environment ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Environment Variables (SECRETS) ---
+.env
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# --- Data Lake (terlalu besar untuk git) ---
+data/
+*.tif
+*.tiff
+*.geotiff
+*.geojson
+!database/*.sql
+
+# --- Routing weights output ---
+data/routing_weights/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+notebooks/*.ipynb
+!notebooks/.gitkeep
+
+# --- Docker volumes ---
+pgdata/
+
+# --- Pytest ---
+.pytest_cache/
+htmlcov/
+.coverage
+
+# --- OS ---
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# --- Node (jika dashboard pakai npm) ---
+node_modules/
+frontend/dashboard/node_modules/
+frontend/dashboard/dist/
+frontend/dashboard/build/
+
+# --- Logs ---
+*.log
+
+# --- Spark ---
+spark-warehouse/
+metastore_db/
+derby.log

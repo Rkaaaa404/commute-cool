@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>COMMUTE-COOL | Navigasi Pejalan Kaki Surabaya</title>
+
+    <!-- MapLibre GL JS (free, no token needed) -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+    <!-- HLS.js for CCTV live stream playback -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <!-- Inter font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Map Container -->
+        <div id="map"></div>
+
+        <!-- Search Panel -->
+        <div id="search-bar">
+            <div class="search-header">
+                <div class="logo">
+                    <svg class="logo-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1a936f" stroke-width="2">
+                        <path d="M12 22s-8-4.5-8-11.8A8 8 0 0112 2a8 8 0 018 8.2c0 7.3-8 11.8-8 11.8z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span class="logo-text">COMMUTE-COOL</span>
+                </div>
+            </div>
+            <div class="search-inputs">
+                <div class="input-group">
+                    <span class="input-icon origin-dot"></span>
+                    <input type="text" id="origin-input" placeholder="Titik awal (klik peta)" readonly>
+                </div>
+                <div class="input-group">
+                    <span class="input-icon dest-dot"></span>
+                    <input type="text" id="dest-input" placeholder="Tujuan (klik peta)" readonly>
+                </div>
+                <button id="calculate-btn" disabled>Cari Rute</button>
+            </div>
+        </div>
+
+        <!-- Route Results Panel -->
+        <div id="route-panel" class="hidden">
+            <div class="panel-header">
+                <h3>Pilih Rute</h3>
+                <button id="close-panel" class="close-btn">&times;</button>
+            </div>
+            <div id="route-cards"></div>
+
+            <!-- Info Footer -->
+            <div class="panel-footer">
+                <div id="weather-info">
+                    <span id="temp-display">--&deg;C</span>
+                    <span class="separator">|</span>
+                    <span id="aqi-display">AQI: --</span>
+                </div>
+                <div id="profile-info">
+                    <label for="tolerance-select">Toleransi:</label>
+                    <select id="tolerance-select">
+                        <option value="low">Rendah</option>
+                        <option value="medium" selected>Sedang</option>
+                        <option value="high">Tinggi</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div id="legend">
+            <div class="legend-title">Kenyamanan Termal</div>
+            <div class="legend-item"><span class="legend-color" style="background:#1a936f"></span> Teduh (TCS &gt; 0.7)</div>
+            <div class="legend-item"><span class="legend-color" style="background:#f4a261"></span> Sedang (0.4-0.7)</div>
+            <div class="legend-item"><span class="legend-color" style="background:#e63946"></span> Panas (TCS &lt; 0.4)</div>
+            <div class="legend-toggle">
+                <label><input type="checkbox" id="heatmap-toggle" checked> Thermal Heatmap</label>
+            </div>
+        </div>
+    </div>
+
+    <script src="map.js"></script>
+    <script src="cctv-preview.js"></script>
+    <script src="route-panel.js"></script>
+</body>
+</html>
