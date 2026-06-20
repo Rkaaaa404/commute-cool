@@ -2,7 +2,8 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import maplibregl from 'maplibre-gl';
 import type { Coordinate, RouteResponse, CCTVCamera } from '../types';
-import { fetchThermalSegments, fetchNearbyCCTV } from '../services/api';
+import { fetchThermalSegments, fetchNearbyCCTV, fetchTemperatureHeatmap } from '../services/api';
+import type { LngLatBoundsLike } from 'maplibre-gl';
 
 const SURABAYA_CENTER: [number, number] = [112.7521, -7.2575];
 const LIBERTY_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
@@ -15,6 +16,7 @@ export interface MapViewProps {
   onMapClick: (coord: Coordinate) => void;
   onCCTVClick: (cam: CCTVCamera) => void;
   clickMode: 'origin' | 'destination';
+  showTempHeatmap?: boolean;
 }
 
 export interface MapViewRef {
@@ -28,7 +30,8 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
   selectedRouteType,
   onMapClick, 
   onCCTVClick, 
-  clickMode 
+  clickMode,
+  showTempHeatmap = false
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -74,6 +77,26 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
       loadHeatmap(map);
     });
 
+    // Reload TCS segments when user pans/zooms to show only segments in viewport
+    map.on('moveend', () => {
+      if (!map.getSource('thermal')) return; // only refresh if already initialized
+      const b = map.getBounds();
+      const bbox = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
+      fetchThermalSegments(bbox).then(segments => {
+        const src = map.getSource('thermal') as maplibregl.GeoJSONSource | undefined;
+        if (!src) return;
+        const geojson: GeoJSON.FeatureCollection = {
+          type: 'FeatureCollection',
+          features: segments.map(seg => ({
+            type: 'Feature' as const,
+            geometry: seg.geometry,
+            properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
+          })),
+        };
+        src.setData(geojson);
+      }).catch(err => console.warn('[Viewport] TCS reload failed:', err));
+    });
+
     map.on('click', (e) => {
       onMapClickRef.current({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
@@ -92,6 +115,30 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
       mapRef.current.getCanvas().style.cursor = clickMode === 'origin' ? 'crosshair' : 'cell';
     }
   }, [clickMode]);
+
+  // Toggle between TCS segments and Temperature Heatmap
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const setVisibility = () => {
+      if (showTempHeatmap) {
+        if (map.getLayer('temp-heatmap-layer')) map.setLayoutProperty('temp-heatmap-layer', 'visibility', 'visible');
+        if (map.getLayer('thermal-glow')) map.setLayoutProperty('thermal-glow', 'visibility', 'none');
+        if (map.getLayer('thermal-line')) map.setLayoutProperty('thermal-line', 'visibility', 'none');
+      } else {
+        if (map.getLayer('temp-heatmap-layer')) map.setLayoutProperty('temp-heatmap-layer', 'visibility', 'none');
+        if (map.getLayer('thermal-glow')) map.setLayoutProperty('thermal-glow', 'visibility', 'visible');
+        if (map.getLayer('thermal-line')) map.setLayoutProperty('thermal-line', 'visibility', 'visible');
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      setVisibility();
+    } else {
+      map.once('load', setVisibility);
+    }
+  }, [showTempHeatmap]);
 
   // Update origin marker
   useEffect(() => {
@@ -290,61 +337,92 @@ function addBuildings(map: maplibregl.Map) {
 
 async function loadHeatmap(map: maplibregl.Map) {
   try {
+    // 1. Load TCS Line Heatmap
     const segments = await fetchThermalSegments();
-    if (!segments.length) {
-      return;
+    if (segments.length) {
+      const geojson: GeoJSON.FeatureCollection = {
+        type: 'FeatureCollection',
+        features: segments.map(seg => ({
+          type: 'Feature' as const,
+          geometry: seg.geometry,
+          properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
+        })),
+      };
+
+      map.addSource('thermal', { type: 'geojson', data: geojson });
+
+      // Glow layer
+      map.addLayer({
+        id: 'thermal-glow',
+        type: 'line',
+        source: 'thermal',
+        paint: {
+          'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
+            0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 12],
+          'line-opacity': 0.3,
+          'line-blur': 3,
+        },
+      });
+
+      // Crisp layer
+      map.addLayer({
+        id: 'thermal-line',
+        type: 'line',
+        source: 'thermal',
+        paint: {
+          'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
+            0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 5],
+          'line-opacity': 0.75,
+        },
+      });
+
+      // Click popup
+      map.on('click', 'thermal-line', (e) => {
+        const props = e.features?.[0]?.properties;
+        if (!props) return;
+        const tcs = Number(props.tcs).toFixed(2);
+        const label = Number(tcs) >= 0.7 ? 'Nyaman' : Number(tcs) >= 0.4 ? 'Sedang' : 'Panas';
+        const color = Number(tcs) >= 0.7 ? '#1a936f' : Number(tcs) >= 0.4 ? '#f4a261' : '#e63946';
+        new maplibregl.Popup({ closeOnClick: true })
+          .setLngLat(e.lngLat)
+          .setHTML(`<div style="font-size:12px;font-family:Inter,sans-serif"><b style="color:${color}">TCS: ${tcs}</b><br/><span style="color:#666">${label}</span></div>`)
+          .addTo(map);
+      });
     }
 
-    const geojson: GeoJSON.FeatureCollection = {
-      type: 'FeatureCollection',
-      features: segments.map(seg => ({
-        type: 'Feature' as const,
-        geometry: seg.geometry,
-        properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
-      })),
-    };
+    // 2. Load Temperature Point Heatmap (Apparent Temp)
+    const tempGeojson = await fetchTemperatureHeatmap();
+    map.addSource('temp-heatmap', { type: 'geojson', data: tempGeojson });
 
-    map.addSource('thermal', { type: 'geojson', data: geojson });
-
-    // Glow layer
     map.addLayer({
-      id: 'thermal-glow',
-      type: 'line',
-      source: 'thermal',
+      id: 'temp-heatmap-layer',
+      type: 'heatmap',
+      source: 'temp-heatmap',
+      maxzoom: 18,
       paint: {
-        'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
-          0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 12],
-        'line-opacity': 0.3,
-        'line-blur': 3,
-      },
+        'heatmap-weight': ['interpolate', ['linear'], ['get', 'temp'], 28, 0, 45, 1],
+        'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 12, 1, 18, 3],
+        'heatmap-color': [
+          'interpolate',
+          ['linear'],
+          ['heatmap-density'],
+          0, 'rgba(33,102,172,0)',
+          0.2, 'rgb(103,169,207)',
+          0.4, 'rgb(209,229,240)',
+          0.6, 'rgb(253,219,199)',
+          0.8, 'rgb(239,138,98)',
+          1, 'rgb(178,24,43)'
+        ],
+        'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 12, 15, 18, 40],
+        'heatmap-opacity': 0.8
+      }
     });
 
-    // Crisp layer
-    map.addLayer({
-      id: 'thermal-line',
-      type: 'line',
-      source: 'thermal',
-      paint: {
-        'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
-          0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 5],
-        'line-opacity': 0.75,
-      },
-    });
+    // Hidden by default
+    map.setLayoutProperty('temp-heatmap-layer', 'visibility', 'none');
 
-    // Click popup
-    map.on('click', 'thermal-line', (e) => {
-      const props = e.features?.[0]?.properties;
-      if (!props) return;
-      const tcs = Number(props.tcs).toFixed(2);
-      const label = Number(tcs) >= 0.7 ? 'Nyaman' : Number(tcs) >= 0.4 ? 'Sedang' : 'Panas';
-      const color = Number(tcs) >= 0.7 ? '#1a936f' : Number(tcs) >= 0.4 ? '#f4a261' : '#e63946';
-      new maplibregl.Popup({ closeOnClick: true })
-        .setLngLat(e.lngLat)
-        .setHTML(`<div style="font-size:12px;font-family:Inter,sans-serif"><b style="color:${color}">TCS: ${tcs}</b><br/><span style="color:#666">${label}</span></div>`)
-        .addTo(map);
-    });
   } catch (err) {
     console.error('[Heatmap] Failed to load:', err);
   }

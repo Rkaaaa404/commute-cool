@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
+import { SegmentedControl, Text } from '@mantine/core';
 import SearchPanel from '@/components/SearchPanel';
 import RoutePanel from '@/components/RoutePanel';
 import CCTVModal from '@/components/CCTVModal';
@@ -22,6 +23,7 @@ export default function NavigationPage() {
   const [cctvModal, setCctvModal] = useState<CCTVCamera | null>(null);
   const [clickMode, setClickMode] = useState<'origin' | 'destination'>('origin');
   const [selectedRouteType, setSelectedRouteType] = useState<string | null>(null);
+  const [showTempHeatmap, setShowTempHeatmap] = useState(false);
 
   const mapRef = useRef<MapViewRef>(null);
 
@@ -81,6 +83,7 @@ export default function NavigationPage() {
         onMapClick={handleMapClick}
         onCCTVClick={setCctvModal}
         clickMode={clickMode}
+        showTempHeatmap={showTempHeatmap}
       />
       
       {/* Banner mode indikator */}
@@ -144,6 +147,56 @@ export default function NavigationPage() {
         camera={cctvModal}
         onClose={() => setCctvModal(null)}
       />
+
+      {/* Weather Warning Banner */}
+      {routeData?.weather_alert && (
+        <div style={{
+          position: 'absolute',
+          top: 48,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#f59f00',
+          color: 'white',
+          padding: '6px 20px',
+          borderRadius: '8px',
+          fontSize: '13px',
+          fontWeight: 'bold',
+          zIndex: 45,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+          maxWidth: '90%',
+          textAlign: 'center'
+        }}>
+          ⚠️ {routeData.weather_alert}
+        </div>
+      )}
+
+      {/* Map Layer Switcher Control */}
+      <div style={{
+        position: 'absolute',
+        bottom: 24,
+        left: 24,
+        zIndex: 50,
+        background: 'white',
+        padding: '8px 12px',
+        borderRadius: '8px',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        pointerEvents: 'auto'
+      }}>
+        <Text size="xs" fw={700} c="dimmed">LAYER PETA</Text>
+        <SegmentedControl
+          size="xs"
+          value={showTempHeatmap ? 'temp' : 'tcs'}
+          onChange={(val) => setShowTempHeatmap(val === 'temp')}
+          data={[
+            { label: 'Kenyamanan Jalan (TCS)', value: 'tcs' },
+            { label: 'Suhu Udara (UHI)', value: 'temp' },
+          ]}
+          color="teal"
+        />
+      </div>
     </div>
   );
 }

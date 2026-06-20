@@ -28,3 +28,9 @@ JDBC_PROPS = {
 }
 
 RAW_DATA_DIR = os.getenv("RAW_DATA_DIR", "./data/raw")
+
+# --- HDFS Medallion Directory Paths ---
+HDFS_PREFIX = os.getenv("HDFS_NAMENODE", "hdfs://namenode:9000")
+BRONZE_DIR = f"{HDFS_PREFIX}/lakehouse/bronze"
+SILVER_DIR = f"{HDFS_PREFIX}/lakehouse/silver"
+GOLD_DIR = f"{HDFS_PREFIX}/lakehouse/gold"

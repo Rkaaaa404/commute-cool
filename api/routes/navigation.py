@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
 
 from api.models.schemas import RouteRequest, RouteResponse
 from api.db import get_conn
 
 router = APIRouter()
+
+# Penalty multiplier per heat tolerance level
+# Applies only to the "most_comfortable" route cost calculation.
+# Low tolerance → higher penalty on hot segments → Dijkstra aggressively seeks shade.
+# High tolerance → lower penalty → prefers shorter/faster routes.
+_PENALTY_MULT = {"low": 1.75, "medium": 1.25, "high": 0.8}
 
 
 @router.post("/route", response_model=RouteResponse)
@@ -41,15 +48,29 @@ async def calculate_route(request: RouteRequest):
         if source_node == target_node:
             return _empty_response(budget_limit)
 
-        # Route 1: Shortest (base cost = distance/speed)
-        shortest = await _run_pgr_route(conn, source_node, target_node, "shortest", budget_limit)
+        # Route 1: Shortest (base cost = distance/speed, unaffected by tolerance)
+        shortest = await _run_pgr_route(conn, source_node, target_node, "shortest", budget_limit, heat_tolerance)
 
-        # Route 2: Most comfortable (total cost = distance + thermal penalty)
-        comfortable = await _run_pgr_route(conn, source_node, target_node, "most_comfortable", budget_limit)
+        # Route 2: Most comfortable (total cost = distance + thermal penalty weighted by tolerance)
+        comfortable = await _run_pgr_route(conn, source_node, target_node, "most_comfortable", budget_limit, heat_tolerance)
+
+        # Get active weather warning summary if any
+        alert_row = await conn.fetchrow("""
+            SELECT title, severity, description
+            FROM weather_alerts
+            WHERE is_active = TRUE
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY severity DESC, issued_at DESC
+            LIMIT 1
+        """)
+        
+        weather_alert_str = None
+        if alert_row:
+            weather_alert_str = f"[{alert_row['severity'].upper()}] {alert_row['title']}: {alert_row['description']}"
 
     return RouteResponse(
         routes=[shortest, comfortable],
-        weather_alert=None,
+        weather_alert=weather_alert_str,
         heat_budget={"budget_limit_min": budget_limit, "recommended_route": "most_comfortable"},
     )
 
@@ -64,13 +85,18 @@ async def _find_nearest_node(conn, lng: float, lat: float) -> int | None:
     return row["id"] if row else None
 
 
-async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget_limit: float) -> dict:
+async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget_limit: float, heat_tolerance: str = "medium") -> dict:
     """Run pgr_dijkstra and build route response."""
+    penalty_mult = _PENALTY_MULT.get(heat_tolerance, 1.25)
+
     # Choose cost column based on route type
     if route_type == "shortest":
+        # Shortest route is purely distance-based, tolerance has no effect
         cost_sql = "COALESCE(s.length_m, 50) / 1.33"  # walking speed m/s
     else:
-        cost_sql = "COALESCE(ew.total_cost, COALESCE(s.length_m, 50) / 1.33)"
+        # Comfortable route: thermal penalty is scaled by the user's tolerance multiplier
+        # TCS=1.0 (cool) → no extra penalty; TCS=0.0 (hot) → max penalty
+        cost_sql = f"(COALESCE(s.length_m, 50) / 1.33) * (1.0 + (1.0 - COALESCE(tcs.tcs_value, 0.5)) * {penalty_mult})"
 
     # pgr_dijkstra query with edge_weights join
     try:
@@ -86,8 +112,24 @@ async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget
                 ST_AsGeoJSON(sn.geom) as geom_json
             FROM pgr_dijkstra(
                 'SELECT sn.id, sn.source::integer, sn.target::integer,
-                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) as cost,
-                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) as reverse_cost
+                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) * (
+                            CASE WHEN EXISTS (
+                                SELECT 1 FROM weather_alerts wa
+                                WHERE wa.is_active = TRUE
+                                  AND (wa.expires_at IS NULL OR wa.expires_at > NOW())
+                                  AND wa.severity IN (''severe'', ''extreme'')
+                                  AND ST_Intersects(sn.geom, wa.affected_area)
+                            ) THEN 100.0 ELSE 1.0 END
+                        ) as cost,
+                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) * (
+                            CASE WHEN EXISTS (
+                                SELECT 1 FROM weather_alerts wa
+                                WHERE wa.is_active = TRUE
+                                  AND (wa.expires_at IS NULL OR wa.expires_at > NOW())
+                                  AND wa.severity IN (''severe'', ''extreme'')
+                                  AND ST_Intersects(sn.geom, wa.affected_area)
+                            ) THEN 100.0 ELSE 1.0 END
+                        ) as reverse_cost
                  FROM segments_noded sn
                  JOIN segments s ON sn.old_id = s.segment_id
                  LEFT JOIN edge_weights ew ON ew.segment_id = sn.old_id
@@ -190,25 +232,58 @@ def _empty_response(budget_limit: float) -> RouteResponse:
     )
 
 
-@router.get("/segments/thermal")
-async def get_thermal_segments():
-    """Get segments with TCS values for heatmap overlay."""
+@router.get("/segments/tcs")
+async def get_tcs_segments(
+    west: Optional[float] = Query(None, description="Bbox west longitude"),
+    south: Optional[float] = Query(None, description="Bbox south latitude"),
+    east: Optional[float] = Query(None, description="Bbox east longitude"),
+    north: Optional[float] = Query(None, description="Bbox north latitude"),
+):
+    """Get TCS segments, optionally filtered to a viewport bounding box.
+
+    When bbox params are provided (west/south/east/north), only segments
+    within that viewport are returned — enabling efficient viewport-based
+    loading in the frontend map.
+    """
     async with get_conn() as conn:
-        rows = await conn.fetch("""
-            SELECT
-                s.segment_id,
-                tcs.tcs_value,
-                ST_AsGeoJSON(s.geom) as geometry
-            FROM segments s
-            INNER JOIN LATERAL (
-                SELECT tcs_value
-                FROM thermal_comfort_scores
-                WHERE segment_id = s.segment_id
-                ORDER BY computed_at DESC
-                LIMIT 1
-            ) tcs ON true
-            LIMIT 2000
-        """)
+        if all(v is not None for v in [west, south, east, north]):
+            # Viewport-filtered query using PostGIS GIST index
+            rows = await conn.fetch("""
+                SELECT
+                    s.segment_id,
+                    tcs.tcs_value,
+                    ST_AsGeoJSON(s.geom) as geometry
+                FROM segments s
+                INNER JOIN LATERAL (
+                    SELECT tcs_value
+                    FROM thermal_comfort_scores
+                    WHERE segment_id = s.segment_id
+                    ORDER BY computed_at DESC
+                    LIMIT 1
+                ) tcs ON true
+                WHERE ST_Intersects(
+                    s.geom,
+                    ST_MakeEnvelope($1, $2, $3, $4, 4326)
+                )
+                LIMIT 3000
+            """, west, south, east, north)
+        else:
+            # No bbox: return all (initial load)
+            rows = await conn.fetch("""
+                SELECT
+                    s.segment_id,
+                    tcs.tcs_value,
+                    ST_AsGeoJSON(s.geom) as geometry
+                FROM segments s
+                INNER JOIN LATERAL (
+                    SELECT tcs_value
+                    FROM thermal_comfort_scores
+                    WHERE segment_id = s.segment_id
+                    ORDER BY computed_at DESC
+                    LIMIT 1
+                ) tcs ON true
+                LIMIT 2000
+            """)
 
     return [
         {
@@ -218,3 +293,9 @@ async def get_thermal_segments():
         }
         for row in rows
     ]
+
+
+@router.get("/segments/thermal")
+async def get_thermal_segments():
+    """Alias for /segments/tcs — backward compatibility."""
+    return await get_tcs_segments()

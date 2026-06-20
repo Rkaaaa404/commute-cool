@@ -25,7 +25,7 @@ RUN mkdir -p /opt/spark/jars && \
 WORKDIR /app
 COPY spark_jobs/ ./spark_jobs/
 COPY ingestion/ ./ingestion/
-COPY data/ ./data/
+RUN mkdir -p data
 
 ENV PYTHONPATH=/app
 ENV PYSPARK_PYTHON=python3

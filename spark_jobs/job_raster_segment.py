@@ -161,7 +161,14 @@ def run(air_temp: float = None):
         row_count = result_df.count()
         print(f"  Computed raster scores for {row_count} segments")
 
-        # Write to PostGIS
+        # Write to HDFS Gold (Parquet)
+        from spark_jobs.config import GOLD_DIR
+        gold_path = f"{GOLD_DIR}/segment_raster_scores"
+        print(f"  Writing raster scores to HDFS Gold Parquet: {gold_path}")
+        result_df.write.mode("overwrite").parquet(gold_path)
+
+        # Write to PostGIS (Serving Layer)
+        print("  Writing raster scores to PostgreSQL...")
         (
             result_df.write
             .mode("overwrite")

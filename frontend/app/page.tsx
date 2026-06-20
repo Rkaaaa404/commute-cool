@@ -38,16 +38,18 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<UHISummary | null>(null);
   const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [walkability, setWalkability] = useState<WalkabilityStats | null>(null);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
       try {
-        const [uhiRes, corrRes, walkRes] = await Promise.all([
+        const [uhiRes, corrRes, walkRes, alertsRes] = await Promise.all([
           fetch(`${API_BASE}/dashboard/uhi`),
           fetch(`${API_BASE}/dashboard/priority-corridors`),
           fetch(`${API_BASE}/dashboard/walkability`),
+          fetch(`${API_BASE}/dashboard/active-alerts`),
         ]);
 
         if (uhiRes.ok) {
@@ -61,6 +63,10 @@ export default function DashboardPage() {
         if (walkRes.ok) {
           const data = await walkRes.json();
           setWalkability(data);
+        }
+        if (alertsRes.ok) {
+          const data = await alertsRes.json();
+          setAlerts(data || []);
         }
       } catch (err) {
         console.error('[Dashboard] Failed to load data:', err);
@@ -85,6 +91,22 @@ export default function DashboardPage() {
       <Text size="sm" c="dimmed" mb="lg">
         Data real dari pipeline Big Data — terakhir diproses oleh Apache Spark.
       </Text>
+
+      {alerts.length > 0 && (
+        <Card withBorder bg="red.0" p="md" mb="md" style={{ borderColor: 'var(--mantine-color-red-3)' }}>
+          <Group gap="sm" align="flex-start" wrap="nowrap">
+            <span style={{ fontSize: '20px', marginTop: '2px' }}>⚠️</span>
+            <div>
+              <Text fw={700} c="red.9" size="sm">Peringatan Cuaca Aktif BMKG (Surabaya)</Text>
+              {alerts.map((alert, i) => (
+                <Text size="xs" c="red.8" key={i} mt="xs">
+                  • <b>{alert.title}</b>: {alert.description}
+                </Text>
+              ))}
+            </div>
+          </Group>
+        </Card>
+      )}
 
       <Tabs defaultValue="overview" variant="outline" mb="lg">
         <Tabs.List>

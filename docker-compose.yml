@@ -36,6 +36,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      namenode:
+        condition: service_started
     environment:
       DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
       RAW_DATA_DIR: /app/data/raw
@@ -44,9 +46,40 @@ services:
       WAQI_API_TOKEN: ${WAQI_API_TOKEN:-}
       PYSPARK_PYTHON: python3
       SPARK_LOCAL_DIRS: /tmp/spark
+      HDFS_NAMENODE: hdfs://namenode:9000
     command: ["-m", "spark_jobs.run_pipeline"]
     volumes:
       - spark_data:/app/data
+
+  # ============================================================
+  # HDFS Namenode & Datanode (Hadoop Cluster)
+  # ============================================================
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: commute_cool_namenode
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    environment:
+      - CLUSTER_NAME=commute_cool
+    env_file:
+      - ./hadoop.env
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: commute_cool_datanode
+    ports:
+      - "9864:9864"
+    environment:
+      - SERVICE_PRECONDITION=namenode:9870
+    env_file:
+      - ./hadoop.env
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    depends_on:
+      - namenode
 
   # ============================================================
   # FastAPI Backend (connects to real PostGIS data)
@@ -71,3 +104,5 @@ services:
 volumes:
   pgdata:
   spark_data:
+  hadoop_namenode:
+  hadoop_datanode:

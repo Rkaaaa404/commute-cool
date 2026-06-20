@@ -22,16 +22,28 @@ def _build_overpass_query(element_type: str) -> str:
     bbox = f"{SURABAYA_BBOX['south']},{SURABAYA_BBOX['west']},{SURABAYA_BBOX['north']},{SURABAYA_BBOX['east']}"
 
     if element_type == "footways":
-        # Include all walkable roads: dedicated pedestrian paths + regular roads
-        # Pedestrians in Indonesia often walk along residential/tertiary roads
+        # 2-category filter to capture all pedestrian-accessible roads:
+        #
+        # Category A — always included (dedicated pedestrian or safe local roads):
+        #   footway, pedestrian, path, steps, living_street, residential,
+        #   tertiary, secondary, unclassified, service
+        #
+        # Category B — included ONLY if tagged with a sidewalk:
+        #   primary roads that have a physically mapped sidewalk in OSM
+        #   (this catches Jl. Basuki Rahmat etc. where a trotoar exists)
+        #
+        # Explicitly EXCLUDED (high-speed / no pedestrian access):
+        #   trunk, trunk_link  — bypass / arterial at speed (e.g. Ahmad Yani bypass)
+        #   motorway, motorway_link — toll roads
         return f"""
         [out:json][timeout:180];
         (
           way["highway"~"footway|pedestrian|path|steps|living_street|residential|tertiary|secondary|unclassified|service"]({bbox});
-          way["sidewalk"~"both|left|right|yes"]({bbox});
+          way["sidewalk"~"both|left|right|yes"]["highway"!~"motorway|motorway_link|trunk|trunk_link"]({bbox});
         );
         out body geom;
         """
+
     elif element_type == "buildings":
         return f"""
         [out:json][timeout:180];

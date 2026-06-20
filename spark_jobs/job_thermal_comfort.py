@@ -55,93 +55,133 @@ def load_segment_base(spark: SparkSession) -> DataFrame:
 
 
 def load_raster_scores(spark: SparkSession) -> DataFrame:
-    """Load latest NDVI/LST scores per segment."""
-    query = """
-    (SELECT DISTINCT ON (segment_id)
-        segment_id, avg_ndvi, avg_lst
-    FROM segment_raster_scores
-    ORDER BY segment_id, computed_at DESC) as latest_raster
-    """
-    return spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
+    """Load latest NDVI/LST scores per segment from HDFS Gold or PostgreSQL fallback."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/segment_raster_scores"
+    try:
+        print(f"  Loading raster scores from HDFS Gold: {gold_path}")
+        return spark.read.parquet(gold_path).select("segment_id", "avg_ndvi", "avg_lst")
+    except Exception as e:
+        print(f"  [Warning] Failed to read raster scores from HDFS Gold: {e}. Falling back to PostgreSQL.")
+        query = """
+        (SELECT DISTINCT ON (segment_id)
+            segment_id, avg_ndvi, avg_lst
+        FROM segment_raster_scores
+        ORDER BY segment_id, computed_at DESC) as latest_raster
+        """
+        return spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
 
 
 def load_shadow_scores(spark: SparkSession, hour: int) -> DataFrame:
-    """Load shadow ratios for specific hour."""
-    query = f"""
-    (SELECT DISTINCT ON (segment_id)
-        segment_id, shade_ratio
-    FROM segment_shadows
-    WHERE hour_of_day = {hour}
-    ORDER BY segment_id, computed_at DESC) as latest_shadow
-    """
-    return spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
+    """Load shadow ratios for specific hour from HDFS Gold or PostgreSQL fallback."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/segment_shadows/hour_of_day={hour}"
+    try:
+        print(f"  Loading shadow scores from HDFS Gold: {gold_path}")
+        return spark.read.parquet(gold_path).select("segment_id", "shade_ratio")
+    except Exception as e:
+        print(f"  [Warning] Failed to read shadow scores from HDFS Gold: {e}. Falling back to PostgreSQL.")
+        query = f"""
+        (SELECT DISTINCT ON (segment_id)
+            segment_id, shade_ratio
+        FROM segment_shadows
+        WHERE hour_of_day = {hour}
+        ORDER BY segment_id, computed_at DESC) as latest_shadow
+        """
+        return spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
 
 
-def get_current_weather() -> dict:
-    """Read latest weather data from raw storage."""
-    weather_dir = os.path.join(RAW_DATA_DIR, "weather")
-    if not os.path.exists(weather_dir):
+def get_current_weather(spark: SparkSession) -> dict:
+    """Read latest weather data from HDFS Bronze or local fallback."""
+    from spark_jobs.config import BRONZE_DIR
+    hdfs_path = f"{BRONZE_DIR}/weather"
+    try:
+        df = spark.read.text(hdfs_path)
+        rows = df.collect()
+        if rows:
+            data = json.loads(rows[-1][0])
+            current = data.get("current", {})
+            return {
+                "apparent_temperature": current.get("apparent_temperature", 33.0),
+                "temperature_2m": current.get("temperature_2m", 32.0),
+                "relative_humidity_2m": current.get("relative_humidity_2m", 70.0),
+                "direct_radiation": current.get("direct_radiation", 500.0),
+            }
         return {"apparent_temperature": 33.0, "relative_humidity_2m": 70.0}
+    except Exception as e:
+        print(f"  [Warning] Failed to read weather from HDFS Bronze: {e}. Falling back to local.")
+        weather_dir = os.path.join(RAW_DATA_DIR, "weather")
+        if not os.path.exists(weather_dir):
+            return {"apparent_temperature": 33.0, "relative_humidity_2m": 70.0}
+        files = sorted([f for f in os.listdir(weather_dir) if f.startswith("weather_")], reverse=True)
+        if not files:
+            return {"apparent_temperature": 33.0, "relative_humidity_2m": 70.0}
+        with open(os.path.join(weather_dir, files[0]), "r") as f:
+            data = json.load(f)
+        current = data.get("current", {})
+        return {
+            "apparent_temperature": current.get("apparent_temperature", 33.0),
+            "temperature_2m": current.get("temperature_2m", 32.0),
+            "relative_humidity_2m": current.get("relative_humidity_2m", 70.0),
+            "direct_radiation": current.get("direct_radiation", 500.0),
+        }
 
-    files = sorted(
-        [f for f in os.listdir(weather_dir) if f.startswith("weather_")],
-        reverse=True,
-    )
-    if not files:
-        return {"apparent_temperature": 33.0, "relative_humidity_2m": 70.0}
 
-    with open(os.path.join(weather_dir, files[0]), "r") as f:
-        data = json.load(f)
-
-    current = data.get("current", {})
-    return {
-        "apparent_temperature": current.get("apparent_temperature", 33.0),
-        "temperature_2m": current.get("temperature_2m", 32.0),
-        "relative_humidity_2m": current.get("relative_humidity_2m", 70.0),
-        "direct_radiation": current.get("direct_radiation", 500.0),
-    }
-
-
-def get_current_aqi() -> float:
-    """Read latest AQI value from raw storage."""
-    aqi_dir = os.path.join(RAW_DATA_DIR, "aqi")
-    if not os.path.exists(aqi_dir):
-        return 50.0  # default moderate
-
-    files = sorted(
-        [f for f in os.listdir(aqi_dir) if f.startswith("aqi_")],
-        reverse=True,
-    )
-    if not files:
+def get_current_aqi(spark: SparkSession) -> float:
+    """Read latest AQI value from HDFS Bronze or local fallback."""
+    from spark_jobs.config import BRONZE_DIR
+    hdfs_path = f"{BRONZE_DIR}/aqi"
+    try:
+        df = spark.read.text(hdfs_path)
+        rows = df.collect()
+        if rows:
+            data = json.loads(rows[-1][0])
+            return float(data.get("aqi", 50.0))
         return 50.0
+    except Exception as e:
+        print(f"  [Warning] Failed to read AQI from HDFS Bronze: {e}. Falling back to local.")
+        aqi_dir = os.path.join(RAW_DATA_DIR, "aqi")
+        if not os.path.exists(aqi_dir):
+            return 50.0
+        files = sorted([f for f in os.listdir(aqi_dir) if f.startswith("aqi_")], reverse=True)
+        if not files:
+            return 50.0
+        with open(os.path.join(aqi_dir, files[0]), "r") as f:
+            data = json.load(f)
+        return float(data.get("aqi", 50.0))
 
-    with open(os.path.join(aqi_dir, files[0]), "r") as f:
-        data = json.load(f)
 
-    return float(data.get("aqi", 50.0))
-
-
-def get_avg_traffic() -> float:
-    """Read average traffic congestion from raw storage."""
-    traffic_dir = os.path.join(RAW_DATA_DIR, "traffic")
-    if not os.path.exists(traffic_dir):
-        return 0.3  # default moderate
-
-    files = sorted(
-        [f for f in os.listdir(traffic_dir) if f.startswith("traffic_")],
-        reverse=True,
-    )
-    if not files:
+def get_avg_traffic(spark: SparkSession) -> float:
+    """Read average traffic congestion from HDFS Bronze or local fallback."""
+    from spark_jobs.config import BRONZE_DIR
+    hdfs_path = f"{BRONZE_DIR}/traffic"
+    try:
+        df = spark.read.text(hdfs_path)
+        rows = df.collect()
+        traffic_data = []
+        for r in rows:
+            try:
+                traffic_data.extend(json.loads(r[0]))
+            except:
+                pass
+        if traffic_data:
+            ratios = [d.get("congestion_ratio", 0.3) for d in traffic_data if d.get("congestion_ratio")]
+            return sum(ratios) / len(ratios) if ratios else 0.3
         return 0.3
-
-    with open(os.path.join(traffic_dir, files[0]), "r") as f:
-        data = json.load(f)
-
-    if isinstance(data, list) and data:
-        ratios = [d.get("congestion_ratio", 0.3) for d in data if d.get("congestion_ratio")]
-        return sum(ratios) / len(ratios) if ratios else 0.3
-
-    return 0.3
+    except Exception as e:
+        print(f"  [Warning] Failed to read traffic from HDFS Bronze: {e}. Falling back to local.")
+        traffic_dir = os.path.join(RAW_DATA_DIR, "traffic")
+        if not os.path.exists(traffic_dir):
+            return 0.3
+        files = sorted([f for f in os.listdir(traffic_dir) if f.startswith("traffic_")], reverse=True)
+        if not files:
+            return 0.3
+        with open(os.path.join(traffic_dir, files[0]), "r") as f:
+            data = json.load(f)
+        if isinstance(data, list) and data:
+            ratios = [d.get("congestion_ratio", 0.3) for d in data if d.get("congestion_ratio")]
+            return sum(ratios) / len(ratios) if ratios else 0.3
+        return 0.3
 
 
 def compute_thermal_comfort(spark: SparkSession, hour: int = None):
@@ -155,9 +195,9 @@ def compute_thermal_comfort(spark: SparkSession, hour: int = None):
     shadow_df = load_shadow_scores(spark, hour)
 
     # Get environmental conditions
-    weather = get_current_weather()
-    aqi_value = get_current_aqi()
-    traffic_ratio = get_avg_traffic()
+    weather = get_current_weather(spark)
+    aqi_value = get_current_aqi(spark)
+    traffic_ratio = get_avg_traffic(spark)
 
     apparent_temp = weather["apparent_temperature"]
 
@@ -217,7 +257,13 @@ def compute_thermal_comfort(spark: SparkSession, hour: int = None):
 
 
 def write_results(df: DataFrame):
-    """Write TCS results to PostGIS."""
+    """Write TCS results to HDFS Gold (Parquet) and PostGIS (Serving)."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/thermal_comfort_scores"
+    print(f"  Writing TCS values to HDFS Gold Parquet: {gold_path}")
+    df.write.mode("overwrite").parquet(gold_path)
+
+    print("  Writing TCS values to PostgreSQL...")
     (
         df.write
         .mode("append")

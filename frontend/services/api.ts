@@ -21,11 +21,28 @@ export async function fetchRoute(
   return res.json();
 }
 
-export async function fetchThermalSegments(): Promise<ThermalSegment[]> {
-  const res = await fetch(`${API_BASE}/segments/thermal`);
-  if (!res.ok) return [];
-  return res.json();
+export async function fetchThermalSegments(
+  bbox?: { west: number; south: number; east: number; north: number }
+): Promise<ThermalSegment[]> {
+  try {
+    let url = `${API_BASE}/segments/tcs`;
+    if (bbox) {
+      const params = new URLSearchParams({
+        west: String(bbox.west),
+        south: String(bbox.south),
+        east: String(bbox.east),
+        north: String(bbox.north),
+      });
+      url += `?${params.toString()}`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
 }
+
 
 export async function fetchNearbyCCTV(lat: number, lng: number, radius = 500): Promise<CCTVCamera[]> {
   try {
@@ -50,5 +67,15 @@ export async function fetchWeather(): Promise<{ temp: number; apparent: number }
     };
   } catch {
     return null;
+  }
+}
+
+export async function fetchTemperatureHeatmap(): Promise<any> {
+  try {
+    const res = await fetch(`${API_BASE}/dashboard/temperature-heatmap`);
+    if (!res.ok) return { type: 'FeatureCollection', features: [] };
+    return res.json();
+  } catch {
+    return { type: 'FeatureCollection', features: [] };
   }
 }

@@ -203,8 +203,34 @@ def load_trees(filepath: str = None):
 
 
 def load_all():
-    """Load all OSM data into PostGIS."""
+    """Load all OSM data into PostGIS.
+    
+    Clears existing tables first to prevent duplicate entries if the pipeline is re-run.
+    """
     print("=== OSM Load to PostGIS Started ===")
+    
+    # Clean up existing data to prevent duplication
+    conn = _get_connection()
+    cur = conn.cursor()
+    try:
+        print("  Clearing existing computed tables and segments to prevent duplication...")
+        cur.execute("UPDATE cctv_cameras SET nearest_segment = NULL;")
+        cur.execute("DELETE FROM edge_weights;")
+        cur.execute("DELETE FROM thermal_comfort_scores;")
+        cur.execute("DELETE FROM segment_shadows;")
+        cur.execute("DELETE FROM segment_raster_scores;")
+        cur.execute("DELETE FROM segments;")
+        cur.execute("DELETE FROM buildings;")
+        cur.execute("DELETE FROM trees;")
+        conn.commit()
+        print("    ✓ Successfully cleared existing database tables.")
+    except Exception as e:
+        conn.rollback()
+        print(f"    ✗ Failed to clear database: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
     segments = load_footways()
     buildings = load_buildings()
     trees = load_trees()

@@ -244,8 +244,15 @@ def _compute_shade_ratios_batch(
     return result_df
 
 
-def write_results(df: DataFrame):
-    """Write shade ratio results to PostGIS."""
+def write_results(df: DataFrame, hour: int):
+    """Write shade ratio results to HDFS Gold (Parquet) and PostGIS (Serving)."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/segment_shadows/hour_of_day={hour}"
+    
+    # Write to HDFS Gold (Parquet)
+    df.write.mode("overwrite").parquet(gold_path)
+
+    # Write to PostGIS (Serving Layer)
     (
         df.write
         .mode("append")
@@ -276,8 +283,8 @@ def run(target_date: date = None):
                 target_date,
             )
             if result_df is not None:
-                write_results(result_df)
-                print(f"  Hour {hour:02d}: written to DB")
+                write_results(result_df, hour)
+                print(f"  Hour {hour:02d}: written to DB and HDFS Gold")
 
         print("=== Shadow Modeling Complete ===")
     finally:

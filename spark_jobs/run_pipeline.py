@@ -85,6 +85,36 @@ def step_1_ingest_apis():
         print(f"  ✗ OSM fetch failed: {e}")
 
 
+
+def upload_to_hdfs_bronze():
+    """Upload ingested raw local files to HDFS Bronze layer using PySpark."""
+    print("\n" + "=" * 60)
+    print("STEP 1.5: Upload Raw Data to HDFS Bronze Layer")
+    print("=" * 60)
+
+    from pyspark.sql import SparkSession
+    from spark_jobs.config import BRONZE_DIR, RAW_DATA_DIR
+
+    spark = SparkSession.builder.appName("CommuteCool_HDFSUploader").master(os.getenv("SPARK_MASTER_URL", "local[*]")).getOrCreate()
+
+    try:
+        categories = ["weather", "aqi", "traffic"]
+        for cat in categories:
+            local_path = os.path.join(RAW_DATA_DIR, cat)
+            hdfs_path = f"{BRONZE_DIR}/{cat}"
+            if os.path.exists(local_path) and os.listdir(local_path):
+                print(f"  Uploading local {local_path} to HDFS {hdfs_path}...")
+                df = spark.read.text(f"file://{os.path.abspath(local_path)}/*.json")
+                df.write.mode("overwrite").text(hdfs_path)
+                print(f"    ✓ Uploaded {cat} successfully")
+            else:
+                print(f"  ⚠ No local data found for category: {cat}")
+    except Exception as e:
+        print(f"  ✗ HDFS Bronze upload failed: {e}")
+    finally:
+        spark.stop()
+
+
 def step_2_load_osm():
     """Load OSM GeoJSON data into PostGIS."""
     print("\n" + "=" * 60)
@@ -103,8 +133,8 @@ def step_2_load_osm():
         cur = conn.cursor()
         cur.execute("SELECT build_routing_topology();")
         conn.commit()
-        # Check how many nodes were created
-        cur.execute("SELECT COUNT(*) FROM segments_vertices_pgr")
+        # Check how many nodes were created in the noded network
+        cur.execute("SELECT COUNT(*) FROM segments_noded_vertices_pgr")
         node_count = cur.fetchone()[0]
         print(f"  Topology built: {node_count} nodes")
         cur.close()
@@ -395,6 +425,7 @@ def main():
 
     # Run pipeline steps
     step_1_ingest_apis()
+    upload_to_hdfs_bronze()
     step_2_load_osm()
     step_3_ndvi_lst()
     step_4_shadow_model()

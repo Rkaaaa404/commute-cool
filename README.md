@@ -55,46 +55,39 @@ Aplikasi ini baru saja mendapatkan peningkatan skala besar pada sistem *database
 
 ---
 
-## Arsitektur
+## Arsitektur & Medallion HDFS Data Lakehouse
+
+COMMUTE-COOL mengimplementasikan arsitektur **Data Lakehouse** dengan pemisahan layer **Medallion (Bronze, Silver, Gold)** menggunakan **HDFS (Hadoop Distributed File System)** sebagai media penyimpanan Big Data dan **Apache Spark** sebagai engine pemrosesan data terdistribusi.
 
 ```
-Docker Compose (Backend)
-+-------------------------------------------------------------------+
-|                                                                   |
-|  spark-pipeline (one-shot)         api (FastAPI :8000)            |
-|  Ingest APIs -> 5 Spark Jobs       POST /api/route (pgRouting)    |
-|  Build pgRouting topology          GET /api/segments/thermal      |
-|  -> exit 0                         GET /api/dashboard/*           |
-|                                    GET /api/cctv/nearby           |
-|         |  JDBC                         |  asyncpg                |
-|         v                               v                         |
-|  postgres (PostGIS + pgRouting :5432)                             |
-|  segments + TCS + edge_weights + routing topology                 |
-+-------------------------------------------------------------------+
-                          ^
-                          | REST API http://localhost:8000
-                          |
-+-------------------------------------------------------------------+
-|  Frontend (lokal, npm run dev)                                    |
-|  Next.js (App Router) + Mantine UI + MapLibre GL JS               |
-|  Heatmap overlay + route display + CCTV modal + dashboard         |
-+-------------------------------------------------------------------+
+Docker Compose (HDFS Data Lakehouse + Serving Layer)
++-----------------------------------------------------------------------------------------+
+|                                                                                         |
+| [ Ingestion Layer ] ──► [ HDFS Bronze ] ──► [ HDFS Silver ] ──► [ HDFS Gold ]           |
+|  Cuaca, AQI, Traffic      (Raw JSON)         (Parquet Clnd)     (Parquet Aggr)          |
+|                                                                   │                     |
+|                                                                   ▼ [Spark JDBC Sink]   |
+| [ API (FastAPI) ] ◄── [ Serving Layer (PostgreSQL/PostGIS) ] ◄────┘                     |
+|   POST /api/route                                                                       |
+|   GET /api/dashboard/temperature-heatmap                                                |
+|   GET /api/dashboard/active-alerts                                                      |
+|                                                                                         |
++-----------------------------------------------------------------------------------------+
+                                          ^
+                                          | REST API http://localhost:8000
+                                          |
++-----------------------------------------------------------------------------------------+
+| [ Frontend Layer (lokal, npm run dev) ]                                                 |
+|   Next.js (App Router) + Mantine UI + MapLibre GL JS (Hardware-Accelerated Heatmap)     |
++-----------------------------------------------------------------------------------------+
 ```
 
-### Pipeline Data Flow
+### Alur Data Medallion
 
-```
-1. Ingestion: Open-Meteo + WAQI + TomTom -> data/raw/ (JSON)
-2. OSM Load: GeoJSON -> PostGIS (segments, buildings, trees)
-3. Node Topology: Ekstraksi persimpangan murni (ST_Node -> `segments_noded`)
-4. pgRouting: Build network topology (`pgr_createTopology` untuk 105k patahan)
-5. Spark Job 1: NDVI/LST (tree density + surface correction)
-6. Spark Job 2: Shadow Modeling (solar position + building/tree geometry)
-7. Spark Job 3: Traffic + AQI Aggregation per segment
-8. Spark Job 4: Thermal Comfort Score (weighted formula)
-9. Map Properties: Pewarisan nilai TCS ke pecahan topologi jalan lama
-10. API: `pgr_dijkstra` on `segments_noded` -> route + TCS data
-```
+1. **Bronze Layer:** Data JSON cuaca, kemacetan, kualitas udara, dan RSS BMKG diunggah langsung ke `hdfs://namenode:9000/lakehouse/bronze/`.
+2. **Silver Layer:** Spark membersihkan data Bronze, menstandarkan tipe data/skema, melakukan interpolasi spasial, dan menyimpan hasilnya sebagai **Parquet terpartisi** di `hdfs://namenode:9000/lakehouse/silver/`.
+3. **Gold Layer:** Spark menghitung LST/NDVI proxy, memproyeksikan bayangan 3D gedung & pohon, serta menghitung Thermal Comfort Score (TCS) dan *edge weights* navigasi. Hasilnya disimpan sebagai **Parquet** di `hdfs://namenode:9000/lakehouse/gold/`.
+4. **Serving Layer:** Data Gold disinkronkan ke PostgreSQL/PostGIS agar API FastAPI dapat melakukan kueri pgRouting (`pgr_dijkstra`) dengan latency sangat rendah (< 2 detik).
 
 ---
 
@@ -276,7 +269,11 @@ curl -X POST http://localhost:8000/api/route -H "Content-Type: application/json"
 
 - Althoff et al. (2017). Large-scale physical activity data reveal worldwide activity inequality. Nature, 547.
 - Copernicus Climate Change Service. Global Climate Highlights 2024.
-- ITDP Indonesia. Pedoman Integrasi Antarmoda.
+- ITDP Indonesia (2020). Pedoman Teknis Trotoar Terintegrasi dan Integrasi Antarmoda.
+- Kong, L., et al. (2021). Assessment of Pedestrian Thermal Comfort under Different Tree Canopy Configurations in Tropical Urban Environments. Building and Environment, Vol. 195.
+- Teshima, Y., et al. (2021). Microclimate and Pedestrian Thermal Comfort in Tropical High-Density Cities: The Effect of Shade Trees on UTCI. Sustainable Cities and Society, Vol. 72.
+- Santamouris, M. (2020). Recent progress in cool phytotechnologies and pavement cooling to mitigate urban heat island. Solar Energy, Vol. 200.
+- Zardo, F., et al. (2021). Shading paths: A spatial optimization model to minimize pedestrian heat stress along walking routes in hot cities. Landscape and Urban Planning, Vol. 214.
 
 ---
 
