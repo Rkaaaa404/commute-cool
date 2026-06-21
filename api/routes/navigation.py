@@ -89,14 +89,46 @@ async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget
     """Run pgr_dijkstra and build route response."""
     penalty_mult = _PENALTY_MULT.get(heat_tolerance, 1.25)
 
-    # Choose cost column based on route type
+    # Check for active severe/extreme weather alerts
+    alert_row = await conn.fetchrow("""
+        SELECT alert_id FROM weather_alerts
+        WHERE is_active = TRUE
+          AND (expires_at IS NULL OR expires_at > NOW())
+          AND severity IN ('severe', 'extreme')
+        LIMIT 1
+    """)
+    has_active_alert = alert_row is not None
+
+    # Choose cost column and joins based on route type
     if route_type == "shortest":
         # Shortest route is purely distance-based, tolerance has no effect
-        cost_sql = "COALESCE(s.length_m, 50) / 1.33"  # walking speed m/s
+        cost_sql = "COALESCE(sn.length_m, 50) / 1.33"  # walking speed m/s
+        joins_sql = ""
     else:
         # Comfortable route: thermal penalty is scaled by the user's tolerance multiplier
         # TCS=1.0 (cool) → no extra penalty; TCS=0.0 (hot) → max penalty
-        cost_sql = f"(COALESCE(s.length_m, 50) / 1.33) * (1.0 + (1.0 - COALESCE(tcs.tcs_value, 0.5)) * {penalty_mult})"
+        cost_sql = f"(COALESCE(sn.length_m, 50) / 1.33) * (1.0 + (1.0 - COALESCE(tcs.tcs_value, 0.5)) * {penalty_mult})"
+        joins_sql = """
+                  LEFT JOIN LATERAL (
+                      SELECT tcs_value FROM thermal_comfort_scores
+                      WHERE segment_id = sn.old_id
+                      ORDER BY computed_at DESC LIMIT 1
+                  ) tcs ON true
+        """
+
+    # Build weather alert penalty sql
+    if has_active_alert:
+        alert_penalty_sql = """(
+                            CASE WHEN EXISTS (
+                                SELECT 1 FROM weather_alerts wa
+                                WHERE wa.is_active = TRUE
+                                  AND (wa.expires_at IS NULL OR wa.expires_at > NOW())
+                                  AND wa.severity IN (''severe'', ''extreme'')
+                                  AND ST_Intersects(sn.geom, wa.affected_area)
+                            ) THEN 100.0 ELSE 1.0 END
+                        )"""
+    else:
+        alert_penalty_sql = "1.0"
 
     # pgr_dijkstra query with edge_weights join
     try:
@@ -104,7 +136,7 @@ async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget
             SELECT
                 r.seq,
                 sn.old_id as segment_id,
-                ST_Length(sn.geom::geography) as length_m,
+                sn.length_m as length_m,
                 s.surface_type,
                 COALESCE(tcs.tcs_value, 0.5) as tcs_value,
                 COALESCE(tcs.shade_ratio, 0.2) as shade_ratio,
@@ -112,28 +144,11 @@ async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget
                 ST_AsGeoJSON(sn.geom) as geom_json
             FROM pgr_dijkstra(
                 'SELECT sn.id, sn.source::integer, sn.target::integer,
-                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) * (
-                            CASE WHEN EXISTS (
-                                SELECT 1 FROM weather_alerts wa
-                                WHERE wa.is_active = TRUE
-                                  AND (wa.expires_at IS NULL OR wa.expires_at > NOW())
-                                  AND wa.severity IN (''severe'', ''extreme'')
-                                  AND ST_Intersects(sn.geom, wa.affected_area)
-                            ) THEN 100.0 ELSE 1.0 END
-                        ) as cost,
-                        ({cost_sql}) * (ST_Length(sn.geom::geography) / NULLIF(s.length_m, 0.1)) * (
-                            CASE WHEN EXISTS (
-                                SELECT 1 FROM weather_alerts wa
-                                WHERE wa.is_active = TRUE
-                                  AND (wa.expires_at IS NULL OR wa.expires_at > NOW())
-                                  AND wa.severity IN (''severe'', ''extreme'')
-                                  AND ST_Intersects(sn.geom, wa.affected_area)
-                            ) THEN 100.0 ELSE 1.0 END
-                        ) as reverse_cost
-                 FROM segments_noded sn
-                 JOIN segments s ON sn.old_id = s.segment_id
-                 LEFT JOIN edge_weights ew ON ew.segment_id = sn.old_id
-                 WHERE sn.source IS NOT NULL AND sn.target IS NOT NULL',
+                        ({cost_sql}) * {alert_penalty_sql} as cost,
+                        ({cost_sql}) * {alert_penalty_sql} as reverse_cost
+                  FROM segments_noded sn
+                  {joins_sql}
+                  WHERE sn.source IS NOT NULL AND sn.target IS NOT NULL',
                 $1::bigint, $2::bigint, directed := false
             ) r
             JOIN segments_noded sn ON r.edge = sn.id
@@ -246,7 +261,7 @@ async def get_tcs_segments(
     loading in the frontend map.
     """
     async with get_conn() as conn:
-        if all(v is not None for v in [west, south, east, north]):
+        if all(isinstance(v, (int, float)) for v in [west, south, east, north]):
             # Viewport-filtered query using PostGIS GIST index
             rows = await conn.fetch("""
                 SELECT
@@ -298,4 +313,71 @@ async def get_tcs_segments(
 @router.get("/segments/thermal")
 async def get_thermal_segments():
     """Alias for /segments/tcs — backward compatibility."""
-    return await get_tcs_segments()
+    return await get_tcs_segments(None, None, None, None)
+
+
+@router.get("/debug/topology-status")
+async def topology_status():
+    """Diagnostik status topologi pgRouting.
+
+    Mengembalikan jumlah edge, vertex, dan contoh connectivity.
+    Gunakan endpoint ini untuk memverifikasi topologi routing sudah benar.
+    """
+    async with get_conn() as conn:
+        noded_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segments_noded')"
+        )
+        vertices_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segments_noded_vertices_pgr')"
+        )
+
+        if not noded_exists:
+            return {"status": "error", "message": "Tabel segments_noded tidak ditemukan. Jalankan rebuild topology."}
+
+        edge_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded")
+        vertex_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded_vertices_pgr") if vertices_exists else 0
+        null_source = await conn.fetchval("SELECT COUNT(*) FROM segments_noded WHERE source IS NULL OR target IS NULL")
+        segments_count = await conn.fetchval("SELECT COUNT(*) FROM segments")
+
+        sample_node = await conn.fetchval(
+            "SELECT id FROM segments_noded_vertices_pgr ORDER BY the_geom <-> ST_SetSRID(ST_MakePoint(112.7521, -7.2575), 4326) LIMIT 1"
+        ) if vertices_exists else None
+
+        return {
+            "status": "ok" if (null_source == 0 and edge_count > 0) else "warning",
+            "segments_total": segments_count,
+            "noded_edges": edge_count,
+            "noded_vertices": vertex_count,
+            "edges_with_null_topology": null_source,
+            "sample_center_node_id": sample_node,
+            "topology_ready": null_source == 0 and edge_count > 0 and vertex_count > 0,
+        }
+
+
+@router.post("/admin/rebuild-topology")
+async def rebuild_topology():
+    """Rebuild pgRouting topology dari tabel segments.
+
+    Eksekusi fungsi build_routing_topology() yang akan:
+    1. Drop & recreate tabel segments_noded
+    2. Jalankan pgr_createTopology dengan tolerance 0.0005 derajat (~55m)
+
+    PERHATIAN: Proses ini memakan waktu 1-5 menit.
+    """
+    async with get_conn() as conn:
+        try:
+            await conn.execute("SELECT build_routing_topology()")
+            edge_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded")
+            vertex_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded_vertices_pgr")
+            null_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM segments_noded WHERE source IS NULL OR target IS NULL"
+            )
+            return {
+                "status": "success",
+                "message": "Topology rebuilt successfully",
+                "noded_edges": edge_count,
+                "noded_vertices": vertex_count,
+                "null_topology_edges": null_count,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Topology rebuild failed: {str(e)}")

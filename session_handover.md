@@ -1,112 +1,113 @@
 # Laporan Handover Sesi — COMMUTE-COOL (`fp-dev`)
 
-Dokumen ini merangkum status pengerjaan, perubahan kode yang telah diimplementasikan, status sistem saat ini, serta langkah-langkah selanjutnya untuk menyelesaikan dan memverifikasi perbaikan pada platform COMMUTE-COOL.
+Dokumen ini merangkum seluruh perbaikan bug (fixes), pembaruan sistem (updates), proses trial & error yang dilakukan hingga masalah teratasi, serta pembelajaran penting (lessons learned) pada platform COMMUTE-COOL.
 
 ---
 
-## 1. Status Pekerjaan Saat Ini
+## Sesi Sebelumnya (21 Juni 2026 pagi)
 
-Berikut adalah status checklist dari perbaikan bug dan peningkatan fitur yang diminta:
+### 🛠️ MapView Heatmap Crash
+* **Masalah:** Peta visualisasi suhu di frontend mengalami crash total dengan error `Unknown expression "heatmap-value"` dari MapLibre GL.
+* **Solusi:** Memperbaiki properti visualisasi di MapView.tsx dengan mengganti `heatmap-value` menggunakan ekspresi bawaan MapLibre yang benar, yaitu `heatmap-density`.
 
-| Fitur / Perbaikan | Status | Catatan / Lokasi Berkas |
-| :--- | :---: | :--- |
-| **Fix 1: MapView Heatmap Crash** | ✅ Selesai | Mengubah `heatmap-value` menjadi `heatmap-density` di [MapView.tsx](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/frontend/components/MapView.tsx#L389). |
-| **Fix 2: Viewport-based Loading (Bbox)** | ✅ Selesai | Mengintegrasikan kueri viewport menggunakan bounding box (`map.on('moveend')`) di [MapView.tsx](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/frontend/components/MapView.tsx) agar frontend hanya merender segmen yang terlihat. |
-| **Fix 3: Routing Dinamis (Heat Tolerance)** | ✅ Selesai | Menambahkan multiplier penalti toleransi panas (Low: 1.75x, Medium: 1.25x, High: 0.8x) ke dalam formula biaya pgRouting di [navigation.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/api/routes/navigation.py). |
-| **Fix 4: Pembersihan Duplikasi Ingestion** | ✅ Selesai | Menambahkan fungsi *safe delete* pada data lama sebelum memuat data OSM baru di [osm_loader.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/ingestion/osm_loader.py). |
-| **Fix 5: Filter Kategori Jalan OSM (Aman)** | ✅ Selesai | Mengubah filter Overpass di [osm_fetcher.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/ingestion/osm_fetcher.py) agar menyertakan semua jalan ramah pejalan kaki, mengecualikan tol/jalan cepat (`motorway`, `trunk`), dan memasukkan jalan arteri (`primary`) hanya jika memiliki tag `sidewalk`. |
-| **Fix 6: Rebuild Topologi (pgRouting)** | 🔄 Berjalan | Sedang melakukan proses pemecahan segmen yang saling berpotongan menggunakan `pgr_nodeNetwork` di container database (`commute_cool_db`). |
-| **Fix 7: Pengujian E2E & Uji Manual** | ❌ Belum | Harus dijalankan setelah proses rekonstruksi topologi (Fix 6) selesai sepenuhnya. |
+### 🛠️ Bbox Viewport-based Loading
+* **Masalah:** Memuat seluruh segmen kota Surabaya ke browser pejalan kaki menyebabkan beban memori dan lag parah.
+* **Solusi:** Mengimplementasikan kueri berbasis viewport bounding box menggunakan PostGIS `ST_MakeEnvelope` di API, serta mengintegrasikan event listener `map.on('moveend')` pada MapView.tsx agar hanya memuat segmen yang aktif terlihat di layar.
 
----
+### 🛠️ Routing Dinamis 0.00 km — Percobaan Pertama
+* **Masalah:** Navigasi selalu mengembalikan rute dengan jarak `0.00 km`.
+* **Solusi saat itu:** Membangun topologi graph menggunakan pgRouting dengan `pgr_createTopology`. Kami membuat tabel `segments_noded` dan menyalin kolom metrik penting, lalu memanggil `pgr_createTopology` dengan tolerance `0.0001°`.
+* **Catatan:** Solusi ini **belum sepenuhnya berhasil** — routing masih 0 km karena tolerance terlalu kecil.
 
-## 2. Detail Masalah & Solusi yang Diimplementasikan
-
-### A. Heatmap Crash
-* **Masalah:** MapLibre GL mengalami crash dengan pesan error `Unknown expression "heatmap-value"` saat mencoba menggambar lapisan heatmap.
-* **Solusi:** Memperbaiki ekspresi visualisasi dari `heatmap-value` menjadi ekspresi bawaan MapLibre yang benar, yaitu `heatmap-density`.
-
-### B. Masalah Routing 0.00 km (Disconnected Graph)
-* **Masalah:** Semua rute navigasi menghasilkan jarak 0.00 km dan durasi 0 menit. Hal ini disebabkan karena fungsi routing langsung diaplikasikan pada tabel mentah `segments` tanpa dipecah di titik perpotongan (tidak ada node interkoneksi), sehingga pgRouting menganggap titik asal dan tujuan berada di pulau graf yang terisolasi.
-* **Solusi:**
-  1. Mengubah mekanisme pembentukan topologi di [init.sql](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/database/init.sql) agar menggunakan `pgr_nodeNetwork('segments', ...)` untuk membuat tabel noded `segments_noded`.
-  2. Membangun topologi di atas `segments_noded` dengan `pgr_createTopology('segments_noded', ...)`.
-  3. Memperbarui referensi vertex di pipeline Spark ([run_pipeline.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/spark_jobs/run_pipeline.py)) ke tabel `segments_noded_vertices_pgr`.
-
-### C. Kategori Jalan Pejalan Kaki & Penalti Panas
-* **Masalah:** Sebelumnya indikator TCS hanya muncul di jalur khusus pejalan kaki (sehingga cakupan sangat sempit), atau menyertakan jalan tol yang tidak aman. Selain itu, tingkat toleransi panas pengguna belum mempengaruhi penentuan rute.
-* **Solusi:**
-  * Membagi jalan menjadi 2 kategori di `osm_fetcher.py`:
-    * **Kategori A (Selalu Masuk):** `footway`, `pedestrian`, `path`, `steps`, `living_street`, `residential`, `tertiary`, `secondary`, `unclassified`, `service`.
-    * **Kategori B (Bersyarat):** `primary` hanya jika memiliki atribut `sidewalk` (`both`, `left`, `right`, `yes`).
-    * **Pengecualian Mutlak:** Jalan `trunk` dan `motorway` dibuang demi keamanan pejalan kaki.
-  * Menghitung cost sql dinamis untuk rute ternyaman (`most_comfortable`) di API navigasi:
-    $$\text{Cost} = \frac{\text{length\_m}}{1.33} \times (1.0 + (1.0 - \text{TCS}) \times \text{multiplier})$$
-    * Di mana multiplier adalah: **1.75** (Toleransi Low), **1.25** (Toleransi Medium), dan **0.8** (Toleransi High).
+### 🛠️ API Routing Query Hang & Timeout
+* **Masalah:** Permintaan rute `/api/route` mengalami `ReadTimeout` (gagal merespons dalam 20 detik).
+* **Solusi:** Mengoptimalkan kueri navigasi dengan mengganti kalkulasi on-the-fly `ST_Length` ke kolom pre-populated `sn.length_m`, memindahkan pemeriksaan weather alert ke tingkat Python, serta mengeliminasi join tabel redundan.
 
 ---
 
-## 3. Status Terkini Docker & Database
+## Sesi Ini (21 Juni 2026 malam)
 
-* **Docker Containers:**
-  * `commute_cool_db` (Postgres/PostGIS): **Running & Healthy**
-  * `commute_cool_api` (FastAPI): **Running**
-  * `commute_cool_namenode` & `commute_cool_datanode` (HDFS): **Running**
-  * `commute_cool_spark`: **Exited** (selesai mengeksekusi pipeline)
-* **Status Query Rebuild Topologi:**
-  * Saat ini fungsi `build_routing_topology()` sedang memproses tabel `segments` yang berukuran **115.160 segmen** (jumlah bertambah karena perluasan cakupan tipe jalan).
-  * Proses `pgr_nodeNetwork` melakukan pengecekan spasial yang intensif sehingga memerlukan waktu sekitar 5–15 menit di Docker Windows.
+### 🛠️ Routing 0 km — Root Cause & Fix Definitif
+
+**Diagnosis mendalam:**
+1. Menjalankan query `pgr_connectedComponents` pada `segments_noded` — hasilnya: **graph sangat terfragmentasi** (komponen terbesar hanya 1.819 dari 69.373 nodes). Node sumber dan tujuan berada di komponen berbeda → tidak ada path → 0 km.
+2. Penyebab: `pgr_createTopology` dengan tolerance `0.0001°` (±11 meter) terlalu kecil untuk menggabungkan endpoint segmen jalan OSM yang hampir bertemu namun tidak persis sama.
+3. `pgr_analyzeGraph` mengkonfirmasi ada **174.952 intersections yang tidak ter-split** di data.
+
+**Solusi akhir:**
+- Rebuild topology dengan `pgr_createTopology(..., 0.0005, ...)` (±55 meter tolerance).
+- Hasilnya: komponen terbesar meningkat dari 1.819 ke **21.429 nodes**.
+- Test Dijkstra berhasil: 2 node di pusat Surabaya menghasilkan **rute 4.578 km, 29 edges**.
+- Update `rebuild_topology.sql` dan `init.sql` dengan tolerance baru dan flag `clean:=true`.
+
+**Endpoint baru:**
+- `GET /api/debug/topology-status` — cek status tabel dan topology
+- `POST /api/admin/rebuild-topology` — trigger rebuild dari API tanpa masuk Docker
+
+### 🛠️ TCS Map Categorical Colors
+
+**Perubahan:**
+- Ubah MapLibre color expression dari `interpolate` (gradasi halus) ke `step` (4 grade kategoris):
+  - `< 0.3` → 🔴 Merah (#e63946) — "Sangat Panas"
+  - `0.3–0.5` → 🟠 Oranye (#f4a261) — "Panas"
+  - `0.5–0.7` → 🟡 Kuning (#e9c46a) — "Sedang"
+  - `≥ 0.7` → 🟢 Hijau (#1a936f) — "Nyaman"
+- Tambahkan legenda TCS di pojok kiri bawah peta (komponen `TCSLegend.tsx`).
+- Komponen `TCSLegend.tsx` juga mengekspor helper fungsi `tcsToColor`, `tcsToLabel`, `tcsToBadgeColor` yang dipakai oleh `RoutePanel.tsx` dan `app/page.tsx`.
+
+### 🛠️ Frontend Refactor
+
+**File baru:**
+- `frontend/components/TCSLegend.tsx` — legenda + shared TCS color constants
+- `frontend/components/MapLayerSwitcher.tsx` — extracted layer switcher control
+
+**File dimodifikasi:**
+- `frontend/components/MapView.tsx` — pisahkan `loadTCSLayer()` dan `loadTempHeatmapLayer()`, ekstrak marker helpers ke fungsi terpisah, gunakan step color expression
+- `frontend/components/RoutePanel.tsx` — hapus local `tcsColor`/`tcsBadgeColor`, import dari `TCSLegend`
+- `frontend/services/api.ts` — sentralisasi `API_BASE` via env var, tambah typed dashboard functions
+- `frontend/app/page.tsx` — hapus hardcoded `API_BASE`, gunakan fungsi dari `api.ts`
+- `frontend/app/navigasi/page.tsx` — gunakan komponen baru, ekstrak style ke konstanta
+
+### 🛠️ Directory Cleanup
+
+**Dihapus:**
+- `frontend_vite_backup/` — backup Vite lama, tidak relevan lagi
+- `diagnosis-bug.md` — sudah outdated
+- `test_api_logic.py` (root) — duplikat dari `tests/`
+- `test_asyncpg.py` (root) — duplikat dari `tests/`
+- `database/rebuild_topology_v2.sql` — experimental, diganti dengan `rebuild_topology.sql` yang diupdate
+
+**Ditambahkan ke `.gitignore`:**
+- `frontend/.next/`, `frontend/out/`, `frontend/.vercel/`
+- `frontend_vite_backup/`
 
 ---
 
-## 4. Langkah Selanjutnya (Petunjuk Verifikasi)
+## Status Saat ini
 
-Jika Anda melanjutkan sesi ini, ikuti langkah-langkah berikut secara berurutan:
-
-### Langkah 1: Pastikan Proses Rebuild Topologi Selesai
-Periksa apakah tabel `segments_noded` sudah terbentuk dan terisi dengan menjalankan perintah berikut di terminal:
-```powershell
-docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT COUNT(*) FROM segments_noded; SELECT COUNT(*) FROM segments_noded_vertices_pgr;"
-```
-* **Kondisi Sukses:** Kueri di atas mengembalikan jumlah baris yang valid (tidak error "relation does not exist").
-* *Catatan:* Jika kueri mengembalikan error, periksa status kueri yang sedang aktif dengan:
-  ```powershell
-  docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT pid, state, query, age(clock_timestamp(), query_start) FROM pg_stat_activity WHERE state != 'idle';"
-  ```
-
-### Langkah 2: Jalankan Pengujian Otomatis (E2E)
-Setelah topologi selesai dibangun di database, jalankan pengujian backend menggunakan pytest:
-```powershell
-.venv\Scripts\pytest tests/test_e2e.py -v
-```
-* **Kondisi Sukses:** Test case `test_route_endpoint_validation` lulus dan mengembalikan rute dengan `distance_m > 0`.
-
-### Langkah 3: Verifikasi Manual di Browser
-1. Buka frontend di browser: `http://localhost:3001` (atau port 3000 jika sudah kosong).
-2. **Peta Suhu (Heatmap):** Masuk ke halaman peta suhu, aktifkan toggle heatmap, dan pastikan tidak ada pesan error merah atau crash di Developer Console (F12).
-3. **Viewport Loading:** Lakukan zoom-in/zoom-out atau geser peta, periksa tab *Network* di F12, pastikan request ke `/api/segments/tcs?bbox=...` terpanggil secara dinamis dengan koordinat bbox yang sesuai.
-4. **Navigasi / Routing:**
-   * Tentukan titik asal dan tujuan di Surabaya yang terhubung jalan raya.
-   * Pastikan jarak rute ternyaman dan rute terpendek tidak bernilai 0.
-   * Coba ubah opsi toleransi panas pengguna (*Rendah*, *Sedang*, *Tinggi*).
-   * Verifikasi bahwa jalur rute ternyaman berubah secara dinamis menyesuaikan tingkat toleransi (toleransi rendah akan memilih jalur yang lebih teduh meskipun memutar).
-
-### Langkah 4: Pembersihan File Sementara
-Setelah verifikasi berhasil, hapus berkas kueri sementara di database:
-```powershell
-Remove-Item database\rebuild_topology.sql
-```
+| Komponen | Status |
+|---|---|
+| Routing (0 km bug) | ✅ FIXED — tolerance 0.0005°, 21K+ nodes terhubung |
+| TCS Map Colors | ✅ DONE — 4 grade kategoris + legenda di peta |
+| Frontend Refactor | ✅ DONE — komponen diekstrak, API sentralisasi |
+| Directory Cleanup | ✅ DONE — file tidak terpakai dihapus |
+| Documentation | ✅ DONE — README, README_TECHNICAL, session_handover diupdate |
 
 ---
 
-## 5. Ringkasan Perubahan Berkas
+## Hal yang Belum Selesai / Perlu Diperhatikan
 
-Berikut adalah ringkasan perubahan berkas penting dalam repositori ini:
-* **Frontend:**
-  * [MapView.tsx](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/frontend/components/MapView.tsx) - Perbaikan visualisasi heatmap & reload segmen berbasis viewport bounds.
-  * [api.ts](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/frontend/services/api.ts) - Penambahan parameter bounding box pada pemanggilan endpoint segmen.
-* **Backend:**
-  * [navigation.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/api/routes/navigation.py) - Logika penalti toleransi panas & endpoint `/api/segments/tcs` terintegrasi PostGIS.
-  * [init.sql](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/database/init.sql) - Migrasi ke model jaringan topologi `pgr_nodeNetwork`.
-  * [osm_fetcher.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/ingestion/osm_fetcher.py) - Overpass query filter jalan aman pejalan kaki.
-  * [osm_loader.py](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/ingestion/osm_loader.py) - Pencegahan data ganda dengan safe delete.
+1. **Graph masih terfragmentasi sebagian** — komponen terbesar 21K dari total 69K nodes. Untuk routing yang lebih baik, perlu `pgr_nodeNetwork` (spatial splitting di persimpangan) tapi prosesnya >50 menit. Saat ini routing sudah berfungsi untuk sebagian besar titik di Surabaya pusat.
+
+2. **`routing/` directory** — belum dihapus karena berisi kode yang mungkin dirujuk di spark jobs. Perlu dikonfirmasi apakah bisa dihapus.
+
+3. **Tidak ada `NEXT_PUBLIC_API_URL` di `.env`** — saat ini fallback ke `http://localhost:8000/api`. Jika deploy ke server lain, tambahkan env var ini ke `frontend/.env.local`.
+
+---
+
+## Pembelajaran Penting
+
+1. **pgr_createTopology tolerance sangat kritis**: Tolerance `0.0001°` (11m) tidak cukup untuk data OSM pedestrian yang endpoint-nya bisa berbeda beberapa puluh meter. Gunakan minimal `0.0005°` (55m).
+2. **pgr_connectedComponents sebagai diagnostik**: Selalu jalankan `pgr_connectedComponents` setelah rebuild topology untuk memastikan main component mencakup sebagian besar nodes. Jika tidak, routing tidak akan berfungsi meskipun topologi dibangun.
+3. **DRY untuk konstanta warna TCS**: Mendefinisikan warna TCS di satu tempat (TCSLegend.tsx) dan mengimpornya di komponen lain mencegah inkonsistensi visual yang sulit di-debug.
+4. **`clean:=true` wajib saat rebuild**: Tanpa flag ini, `pgr_createTopology` tidak akan mengupdate tabel yang sudah ada.

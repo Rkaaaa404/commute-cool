@@ -3,6 +3,7 @@ import { Paper, Text, Badge, Group, Stack, CloseButton, ActionIcon, ScrollArea, 
 import { IconChevronDown, IconChevronUp, IconThermometer } from '@tabler/icons-react';
 import type { RouteResponse, RouteResult, CCTVCamera, SegmentDetail } from '../types';
 import { useState } from 'react';
+import { tcsToColor, tcsToBadgeColor } from './TCSLegend';
 
 interface Props {
   routeData: RouteResponse;
@@ -12,23 +13,11 @@ interface Props {
   onCCTVClick: (cam: CCTVCamera) => void;
 }
 
-function tcsColor(tcs: number) {
-  if (tcs >= 0.7) return '#1a936f';
-  if (tcs >= 0.4) return '#f4a261';
-  return '#e63946';
-}
-
-function tcsBadgeColor(tcs: number) {
-  if (tcs >= 0.7) return 'green';
-  if (tcs >= 0.4) return 'orange';
-  return 'red';
-}
-
 function SegmentItem({ seg }: { seg: SegmentDetail }) {
   return (
     <Group justify="space-between" align="center" py={6} style={{ borderBottom: '1px solid #f0f0f0' }}>
       <Group gap="xs">
-        <IconThermometer size={16} color={tcsColor(seg.tcs_value)} />
+        <IconThermometer size={16} color={tcsToColor(seg.tcs_value)} />
         <div>
           <Text size="xs" fw={600}>Terasa {seg.apparent_temp.toFixed(1)}°C</Text>
           <Text size="xs" c="dimmed">{seg.length_m.toFixed(0)}m • {seg.surface || 'Jalan aspal'}</Text>
@@ -95,7 +84,7 @@ function RouteCard({
       <Group gap="md" mb={8}>
         <Text size="sm" fw={500}>{(route.distance_m / 1000).toFixed(2)} km</Text>
         <Text size="sm" fw={500}>{route.duration_min.toFixed(0)} mnt berjalan</Text>
-        <Badge size="sm" color={tcsBadgeColor(route.avg_tcs)} variant="light">
+        <Badge size="sm" color={tcsToBadgeColor(route.avg_tcs)} variant="light">
           TCS {route.avg_tcs.toFixed(2)}
         </Badge>
       </Group>

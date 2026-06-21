@@ -125,16 +125,18 @@ commute-cool/
     Job 2: Shadow Modeling     (bayangan bangunan & pohon)
     Job 4: Traffic + AQI       (agregasi per segmen jalan)
     Job 3: Thermal Comfort     (hitung TCS tiap segmen)
-    Job 5: Graph Weight Export (TCS → biaya routing)
+    Job 5: Graph Weight Export (TCS → biaya routing sebagai referensi)
         ↓
   PostgreSQL (PostGIS + pgRouting)
-    → tabel: segments, buildings, trees
-    → tabel: thermal_comfort_scores
-    → tabel: edge_weights (untuk pgRouting)
+    → tabel: segments, segments_noded, buildings, trees
+    → tabel: thermal_comfort_scores (TCS)
+    → tabel: edge_weights (untuk referensi historis)
+    → topologi: segments_noded_vertices_pgr (hasil pgr_nodeNetwork)
 
 [Backend - FastAPI berjalan terus]
-  GET  /api/segments/thermal    → data heatmap
-  POST /api/route               → pgr_dijkstra (2 rute: tercepat vs ternyaman)
+  GET  /api/segments/tcs        → data segment TCS berbasis Viewport Bounds (bbox)
+  GET  /api/segments/thermal    → data heatmap (alias untuk /segments/tcs)
+  POST /api/route               → pgr_dijkstra (kalkulasi biaya dinamis & Personal Heat Budget)
   GET  /api/dashboard/*         → statistik walkability
   GET  /api/cctv/nearby         → daftar CCTV terdekat
 
@@ -401,6 +403,9 @@ curl -X POST http://localhost:8000/api/route `
 | Frontend tidak bisa connect ke API | Pastikan Docker backend sudah running dan port 8000 terbuka |
 | `thermal_comfort_scores` count = 0 | Tunggu spark-pipeline selesai (exit code 0), atau lihat: `docker logs commute_cool_spark` |
 | Database tidak bisa connect | Cek PostgreSQL health: `docker compose ps` |
+| Rute Navigasi 0 km / Disconnected Graph | Topologi terfragmentasi atau belum dibangun. Cek status rebuild dengan perintah: `docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT COUNT(*) FROM segments_noded;"`. Jika kosong, pastikan query `build_routing_topology()` selesai dieksekusi (~5-15 menit). |
+| MapView / Heatmap Crash | Pastikan layer visualisasi di `MapView.tsx` menggunakan ekspresi `heatmap-density` bawaan MapLibre GL, bukan `heatmap-value`. |
+| Duplikasi Data Ingestion | Jalankan ulang pipeline terbaru. Ingestion `osm_loader.py` sekarang otomatis melakukan *safe delete* (membersihkan data lama) sebelum data baru dimuat untuk mencegah duplikasi. |
 
 ---
 

@@ -3,8 +3,15 @@
 import { useEffect, useState } from 'react';
 import { Container, Title, Text, SimpleGrid, Card, Badge, Table, Group, Loader, Tabs } from '@mantine/core';
 import { IconFlame, IconTree, IconWalk } from '@tabler/icons-react';
+import {
+  fetchDashboardUHI,
+  fetchPriorityCorridors,
+  fetchWalkabilityStats,
+  fetchActiveAlerts,
+} from '@/services/api';
+import { tcsToBadgeColor } from '@/components/TCSLegend';
 
-const API_BASE = 'http://localhost:8000/api';
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface UHISummary {
   total_segments: number;
@@ -28,46 +35,30 @@ interface WalkabilityStats {
   avg_tcs_city: number;
 }
 
-function tcsColor(tcs: number) {
-  if (tcs < 0.3) return 'red';
-  if (tcs < 0.5) return 'orange';
-  return 'teal';
-}
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [summary, setSummary] = useState<UHISummary | null>(null);
   const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [walkability, setWalkability] = useState<WalkabilityStats | null>(null);
-  const [alerts, setAlerts] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<Array<{ title: string; description: string; severity: string }>>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
       try {
-        const [uhiRes, corrRes, walkRes, alertsRes] = await Promise.all([
-          fetch(`${API_BASE}/dashboard/uhi`),
-          fetch(`${API_BASE}/dashboard/priority-corridors`),
-          fetch(`${API_BASE}/dashboard/walkability`),
-          fetch(`${API_BASE}/dashboard/active-alerts`),
+        const [uhiData, corrData, walkData, alertsData] = await Promise.all([
+          fetchDashboardUHI(),
+          fetchPriorityCorridors(),
+          fetchWalkabilityStats(),
+          fetchActiveAlerts(),
         ]);
 
-        if (uhiRes.ok) {
-          const data = await uhiRes.json();
-          setSummary(data.summary);
-        }
-        if (corrRes.ok) {
-          const data = await corrRes.json();
-          setCorridors(data.corridors || []);
-        }
-        if (walkRes.ok) {
-          const data = await walkRes.json();
-          setWalkability(data);
-        }
-        if (alertsRes.ok) {
-          const data = await alertsRes.json();
-          setAlerts(data || []);
-        }
+        if (uhiData) setSummary(uhiData.summary);
+        if (corrData) setCorridors(corrData.corridors || []);
+        if (walkData) setWalkability(walkData);
+        if (alertsData) setAlerts(alertsData);
       } catch (err) {
         console.error('[Dashboard] Failed to load data:', err);
       } finally {
@@ -92,6 +83,7 @@ export default function DashboardPage() {
         Data real dari pipeline Big Data — terakhir diproses oleh Apache Spark.
       </Text>
 
+      {/* Active weather alerts */}
       {alerts.length > 0 && (
         <Card withBorder bg="red.0" p="md" mb="md" style={{ borderColor: 'var(--mantine-color-red-3)' }}>
           <Group gap="sm" align="flex-start" wrap="nowrap">
@@ -115,6 +107,7 @@ export default function DashboardPage() {
           <Tabs.Tab value="walkability" leftSection={<IconWalk size={14} />}>Walkability</Tabs.Tab>
         </Tabs.List>
 
+        {/* ── Overview tab ─────────────────────────────────────────────── */}
         <Tabs.Panel value="overview" pt="md">
           <SimpleGrid cols={{ base: 1, sm: 3 }} mb="lg">
             <Card withBorder shadow="xs" padding="md">
@@ -149,6 +142,7 @@ export default function DashboardPage() {
           )}
         </Tabs.Panel>
 
+        {/* ── Corridors tab ─────────────────────────────────────────────── */}
         <Tabs.Panel value="corridors" pt="md">
           <Card withBorder shadow="xs">
             <Group justify="space-between" mb="sm">
@@ -174,7 +168,11 @@ export default function DashboardPage() {
                     <Table.Tr key={i}>
                       <Table.Td>{i + 1}</Table.Td>
                       <Table.Td fw={500}>{c.corridor_name}</Table.Td>
-                      <Table.Td><Badge color={tcsColor(c.avg_tcs)} variant="light">{c.avg_tcs.toFixed(2)}</Badge></Table.Td>
+                      <Table.Td>
+                        <Badge color={tcsToBadgeColor(c.avg_tcs)} variant="light">
+                          {c.avg_tcs.toFixed(2)}
+                        </Badge>
+                      </Table.Td>
                       <Table.Td>{c.pedestrian_volume}</Table.Td>
                       <Table.Td><Text size="xs">{c.nearest_transit || '—'}</Text></Table.Td>
                       <Table.Td><Text size="xs">{c.recommendation}</Text></Table.Td>
@@ -186,6 +184,7 @@ export default function DashboardPage() {
           </Card>
         </Tabs.Panel>
 
+        {/* ── Walkability tab ───────────────────────────────────────────── */}
         <Tabs.Panel value="walkability" pt="md">
           {walkability ? (
             <SimpleGrid cols={{ base: 1, sm: 2 }}>

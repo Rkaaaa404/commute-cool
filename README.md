@@ -4,6 +4,8 @@
 
 Studi Kasus: Kota Surabaya | Final Project Big Data | Semester 4
 
+> 📖 **Dokumentasi Teknis Lengkap:** Detail arsitektur E2E, data lakehouse Medallion HDFS, skema database, dan kalkulasi dinamis pgRouting dapat dibaca di berkas **[README_TECHNICAL.md](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/README_TECHNICAL.md)**.
+
 ---
 
 ## Deskripsi
@@ -19,11 +21,18 @@ Fitur utama:
 
 ---
 
-## 🔥 Pembaruan Penting: Sistem Rute Ekstra Presisi & Optimasi Performa
-Aplikasi ini baru saja mendapatkan peningkatan skala besar pada sistem *database*:
-1. **Routing 100% Akurat (Zero 0km Bug):** Data jalan raya OpenStreetMap kini dipecah secara persisi tinggi pada setiap persimpangan *(node network topology)*. Menghasilkan >105.000 patahan jalan yang memastikan rute ditarik dari titik ke titik dengan sempurna, tidak lagi tembus tembok atau jalan buntu.
-2. **Kinerja Super Cepat (GIST Index & JOIN Optimization):** Kueri *Dijkstra* untuk navigasi pejalan kaki dan kueri analitik halaman Dashboard telah dioptimasi dengan *Spatial Index (GIST)* serta *Direct Join*. Pencarian rute yang sebelumnya *timeout* kini berjalan **dalam waktu kurang dari 2 detik**!
-3. **Data Persisten (Permanen):** Seluruh data hasil komputasi *topology* dan *Thermal Comfort Score* **tersimpan secara permanen** di dalam Docker Volume (`pgdata`). Anda **TIDAK PERLU** menunggu 15 menit lagi meskipun laptop/PC dimatikan. Cukup jalankan `docker compose up -d` dan `npm run dev`, semuanya akan langsung siap!
+## 🔥 Pembaruan Sesi Terbaru
+
+1. **Routing Fix (0 km Bug):** Penyebab bug ditemukan — `pgr_createTopology` sebelumnya menggunakan tolerance `0.0001°` (11m) yang terlalu kecil sehingga endpoint segmen jalan tidak tergabungkan. Tolerance diupgrade ke `0.0005°` (~55m) → komponen terbesar graph meningkat dari 1.800 ke 21.000+ nodes → routing kini menghasilkan jarak nyata.
+2. **TCS Map Color Grades:** Visualisasi kenyamanan jalan di peta diubah dari gradasi halus ke **4 grade warna kategoris** yang mudah dibaca:
+   - 🔴 **Sangat Panas** (TCS < 0.3) — merah
+   - 🟠 **Panas** (TCS 0.3–0.5) — oranye
+   - 🟡 **Sedang** (TCS 0.5–0.7) — kuning
+   - 🟢 **Nyaman** (TCS ≥ 0.7) — hijau
+3. **TCS Legend di Peta:** Legenda interaktif ditambahkan di pojok kiri bawah peta navigasi.
+4. **Frontend Refactor:** Komponen `TCSLegend`, `MapLayerSwitcher` diekstrak, API_BASE disentralisasi via env var, fungsi warna TCS dikonsistensikan di semua komponen.
+5. **Admin Endpoints:** Ditambahkan `/api/debug/topology-status` dan `POST /api/admin/rebuild-topology` untuk memudahkan diagnosa dan maintenance.
+6. **Cleanup:** Dihapus `frontend_vite_backup/`, `diagnosis-bug.md`, dan test duplikat dari root directory.
 
 ---
 
@@ -93,20 +102,34 @@ Docker Compose (HDFS Data Lakehouse + Serving Layer)
 
 ## Routing Engine
 
-COMMUTE-COOL menggunakan pgRouting (extension PostgreSQL) untuk graph-based routing:
+COMMUTE-COOL menggunakan pgRouting (extension PostgreSQL) untuk graph-based routing di atas jaringan jalan yang telah di-node (`segments_noded`):
 
-- **Shortest route**: `pgr_dijkstra` dengan cost = jarak/kecepatan jalan kaki
-- **Most comfortable route**: `pgr_dijkstra` dengan cost = `edge_weights.total_cost` (jarak + thermal penalty)
+- **Shortest route**: `pgr_dijkstra` dengan cost = `base_cost` (waktu tempuh standar pejalan kaki tanpa penalti panas).
+- **Most comfortable route**: `pgr_dijkstra` dengan cost = `total_cost` (waktu tempuh standar + penalti paparan panas dinamis berdasarkan toleransi pengguna).
 
-Thermal penalty dihitung dari TCS:
-```
-total_cost = base_cost * (1 + (1 - TCS) * 2)
-```
-- TCS = 1.0 (nyaman) -> penalty 1x (tanpa tambahan)
-- TCS = 0.5 (sedang) -> penalty 2x
-- TCS = 0.0 (panas) -> penalty 3x
+### Formula Biaya Navigasi (Cost)
+Biaya perjalanan (dalam satuan detik) dihitung secara dinamis di API navigasi:
+$$\text{Cost} = \text{base\_cost} \times (1.0 + (1.0 - \text{TCS}) \times \text{multiplier})$$
 
-Ini membuat router secara alami menghindari segmen panas dan memilih rute yang lebih teduh.
+Di mana:
+1. **$\text{base\_cost}$**: Merupakan waktu tempuh standar (dalam detik) di segmen jalan tersebut tanpa memperhitungkan paparan panas.
+   $$\text{base\_cost} = \frac{\text{length\_m}}{1.33\text{ m/s}}$$
+   *(Mengasumsikan kecepatan rata-rata berjalan pejalan kaki adalah 1.33 m/s atau ~4.8 km/jam).*
+2. **$\text{TCS}$**: *Thermal Comfort Score* segmen tersebut (rentang $0.0$ hingga $1.0$).
+3. **$\text{multiplier}$**: Tingkat penalti panas berdasarkan profil toleransi panas pengguna (*Personal Heat Budget*):
+   * **Rendah (Low)**: $1.75$ — Penalti sangat tinggi pada jalan panas agar pgRouting agresif mencari jalur teduh.
+   * **Sedang (Medium)**: $1.25$ — Penalti seimbang.
+   * **Tinggi (High)**: $0.8$ — Penalti rendah, lebih menoleransi jalan panas demi rute yang lebih singkat.
+
+### Personal Heat Budget (Batas Paparan Panas)
+Setiap tingkat toleransi panas memiliki batas durasi paparan sinar matahari langsung yang direkomendasikan (*budget limit*):
+* **Rendah (Low)**: Maksimal **8 menit**
+* **Sedang (Medium)**: Maksimal **15 menit**
+* **Tinggi (High)**: Maksimal **25 menit**
+
+> [!NOTE]
+> **Bagaimana jika tidak ada rute yang memenuhi batas budget?**
+> Jika rute terbaik yang tersedia di lapangan melebihi batas waktu paparan di atas, sistem **tetap mencarikan dan mengembalikan rute** navigasi ternyaman yang ada. Namun, API akan menyertakan flag `"within_heat_budget": false` dalam respon JSON. Frontend mendeteksi flag ini untuk menampilkan peringatan visual ke pejalan kaki bahwa rute terpilih melebihi batas nyaman tubuh mereka, tetapi rute tetap digambar di peta.
 
 ---
 
@@ -198,10 +221,13 @@ TCS = 0.35 * shade_score
 Range: 0.0 (sangat panas) -> 1.0 (sangat nyaman)
 ```
 
-Visualisasi di peta:
-- Hijau (TCS > 0.7) -- teduh, nyaman
-- Kuning (TCS 0.4-0.7) -- sedang
-- Merah (TCS < 0.4) -- panas
+Visualisasi di peta (4 grade kategoris):
+- 🟢 **Nyaman** (TCS ≥ 0.7) — hijau gelap, teduh dan sejuk
+- 🟡 **Sedang** (TCS 0.5–0.7) — kuning, cukup nyaman
+- 🟠 **Panas** (TCS 0.3–0.5) — oranye, terasa panas
+- 🔴 **Sangat Panas** (TCS < 0.3) — merah, hindari
+
+Legenda grade TCS ditampilkan di pojok kiri bawah peta navigasi.
 
 ---
 
@@ -213,38 +239,43 @@ commute-cool/
 |   |-- main.py                  App entry + lifespan
 |   |-- db.py                    asyncpg connection pool
 |   |-- routes/
-|   |   |-- navigation.py       pgRouting route + thermal heatmap
-|   |   |-- dashboard.py        UHI, corridors, walkability
-|   |   +-- cctv.py             CCTV spatial query
+|   |   |-- navigation.py        pgRouting route + TCS heatmap + debug/admin
+|   |   |-- dashboard.py         UHI, corridors, walkability
+|   |   +-- cctv.py              CCTV spatial query
 |   +-- models/
-|       |-- schemas.py           Pydantic models
-|       +-- database.py          SQLAlchemy ORM (reference)
-|-- spark_jobs/                  PySpark + Sedona processing
-|   |-- run_pipeline.py          Full pipeline orchestrator
-|   |-- config.py                Shared JDBC config
-|   |-- job_raster_segment.py    Job 1: NDVI/LST
-|   |-- job_shadow_model.py      Job 2: Shadow ratio
-|   |-- job_traffic_aqi.py       Job 4: Traffic aggregation
-|   |-- job_thermal_comfort.py   Job 3: TCS calculation
-|   |-- job_graph_weight.py      Job 5: Edge weights
-|   +-- utils/                   Solar position, shadow geometry, normalization
-|-- ingestion/                   Data collection scripts
-|-- frontend/                    React + Mantine + Vite
-|   |-- src/
-|   |   |-- components/          MapView, SearchPanel, RoutePanel, CCTVModal
-|   |   |-- pages/               NavigationPage, DashboardPage
-|   |   |-- services/api.ts      Typed API calls
-|   |   +-- types/index.ts       TypeScript interfaces
-|   +-- package.json
+|       +-- schemas.py            Pydantic models
+|-- spark_jobs/                   PySpark + Sedona processing
+|   |-- run_pipeline.py           Full pipeline orchestrator
+|   |-- config.py                 Shared JDBC config
+|   |-- job_raster_segment.py     Job 1: NDVI/LST
+|   |-- job_shadow_model.py       Job 2: Shadow ratio
+|   |-- job_traffic_aqi.py        Job 4: Traffic aggregation
+|   |-- job_thermal_comfort.py    Job 3: TCS calculation
+|   |-- job_graph_weight.py       Job 5: Edge weights
+|   +-- utils/                    Solar position, shadow geometry, normalization
+|-- ingestion/                    Data collection scripts
+|-- frontend/                     Next.js App Router
+|   |-- app/
+|   |   |-- page.tsx              Dashboard page
+|   |   +-- navigasi/page.tsx     Navigation page
+|   |-- components/
+|   |   |-- MapView.tsx            MapLibre GL map (TCS layer, routing, CCTV)
+|   |   |-- SearchPanel.tsx        Origin/destination search
+|   |   |-- RoutePanel.tsx         Route result cards
+|   |   |-- TCSLegend.tsx          TCS grade legend + shared color helpers
+|   |   |-- MapLayerSwitcher.tsx   TCS/UHI layer toggle control
+|   |   +-- CCTVModal.tsx          CCTV stream modal
+|   |-- services/api.ts            Centralized typed API calls
+|   +-- types/index.ts             TypeScript interfaces
 |-- database/
-|   |-- init.sql                 Schema + pgRouting topology function
-|   +-- seed_transit.sql         Transit stops
-|-- docker-compose.yml           3 services: postgres, spark, api
-|-- Dockerfile.api               Python 3.11-slim
-|-- Dockerfile.spark             Spark 3.5 + Sedona JARs
-|-- requirements-docker.txt      API deps
-|-- requirements-spark.txt       Spark deps
-+-- .env.example                 Environment template
+|   |-- init.sql                   Schema + pgRouting topology function
+|   +-- rebuild_topology.sql       Standalone topology rebuild script
+|-- docker-compose.yml             Services: postgres, spark, api, hadoop
+|-- Dockerfile.api                 Python 3.11-slim
+|-- Dockerfile.spark               Spark 3.5 + Sedona JARs
+|-- requirements-docker.txt        API deps
+|-- requirements-spark.txt         Spark deps
++-- .env.example                   Environment template
 ```
 
 ---

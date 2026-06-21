@@ -215,6 +215,7 @@ def load_all():
     try:
         print("  Clearing existing computed tables and segments to prevent duplication...")
         cur.execute("UPDATE cctv_cameras SET nearest_segment = NULL;")
+        cur.execute("DELETE FROM tcs_simulations;")
         cur.execute("DELETE FROM edge_weights;")
         cur.execute("DELETE FROM thermal_comfort_scores;")
         cur.execute("DELETE FROM segment_shadows;")

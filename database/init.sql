@@ -180,6 +180,24 @@ CREATE INDEX idx_cctv_active ON cctv_cameras (is_active) WHERE is_active = TRUE;
 
 
 -- ============================================================
+-- TABEL: AI/ML Simulasi & Prediksi TCS (Pemerintah Kota)
+-- ============================================================
+CREATE TABLE tcs_simulations (
+    id                      SERIAL PRIMARY KEY,
+    segment_id              INTEGER REFERENCES segments(segment_id),
+    current_tcs             DOUBLE PRECISION,
+    predicted_tcs_green     DOUBLE PRECISION, -- Prediksi TCS jika NDVI ditingkatkan (penghijauan)
+    predicted_tcs_cool      DOUBLE PRECISION, -- Prediksi TCS jika material diubah (cool pavement)
+    tcs_improvement_green   DOUBLE PRECISION,
+    tcs_improvement_cool    DOUBLE PRECISION,
+    simulated_at            TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_tcs_simulations_segment ON tcs_simulations (segment_id);
+
+
+
+-- ============================================================
 -- pgRouting: Network Topology Builder
 -- Run after segments are loaded to build routing graph.
 -- Uses pgr_nodeNetwork to split intersecting segments into
@@ -188,35 +206,40 @@ CREATE INDEX idx_cctv_active ON cctv_cameras (is_active) WHERE is_active = TRUE;
 -- ============================================================
 CREATE OR REPLACE FUNCTION build_routing_topology() RETURNS void AS $$
 BEGIN
-    -- Remove old noded table if it exists (clean rebuild)
     DROP TABLE IF EXISTS segments_noded CASCADE;
 
-    -- Step 1: Node the network
-    -- pgr_nodeNetwork splits segment lines at intersection points,
-    -- creating new nodes wherever two segments cross.
-    -- Output: table "segments_noded" with columns: id, old_id, sub_id, source, target, geom
-    PERFORM pgr_nodeNetwork(
-        'segments',
-        0.0001,          -- tolerance in degrees (~11m for snapping near-intersections)
-        'segment_id',    -- primary key column of segments
-        'geom',          -- geometry column
-        'segments_noded' -- output table name
-    );
+    -- Buat tabel noded dari segments yang valid
+    CREATE TABLE segments_noded AS
+    SELECT
+        segment_id  AS id,
+        segment_id  AS old_id,
+        1           AS sub_id,
+        NULL::integer AS source,
+        NULL::integer AS target,
+        length_m,
+        geom
+    FROM segments
+    WHERE geom IS NOT NULL
+      AND length_m IS NOT NULL
+      AND length_m > 0;
 
-    -- Step 2: Build topology on the noded table
-    -- This sets source/target node IDs on each noded edge and
-    -- creates the segments_noded_vertices_pgr table.
+    ALTER TABLE segments_noded ADD PRIMARY KEY (id);
+    CREATE INDEX idx_segments_noded_geom ON segments_noded USING GIST (geom);
+    CREATE INDEX idx_segments_noded_old_id ON segments_noded (old_id);
+
+    -- Tolerance 0.0005° (~55m) untuk menggabungkan endpoint yang hampir bertemu
     PERFORM pgr_createTopology(
         'segments_noded',
-        0.0001,
+        0.0005,
         'geom',
-        'id'
+        'id',
+        'source',
+        'target',
+        rows_where := 'true',
+        clean := true
     );
 
-    -- Step 3: Analyze the graph for connectivity diagnostics
-    PERFORM pgr_analyzeGraph('segments_noded', 0.0001, 'geom', 'id');
-
-    RAISE NOTICE 'Routing topology built successfully (pgr_nodeNetwork)';
+    RAISE NOTICE 'Routing topology built successfully (tolerance=0.0005)';
 END;
 $$ LANGUAGE plpgsql;
 

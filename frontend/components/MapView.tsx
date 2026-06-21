@@ -8,6 +8,38 @@ import type { LngLatBoundsLike } from 'maplibre-gl';
 const SURABAYA_CENTER: [number, number] = [112.7521, -7.2575];
 const LIBERTY_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
+/**
+ * MapLibre GL expression untuk warna kategoris TCS (step-based).
+ * 4 grade yang jelas dan distinct, lebih mudah dibaca dari gradien halus.
+ *
+ * TCS < 0.3  → Merah   #e63946  (Sangat Panas)
+ * TCS < 0.5  → Oranye  #f4a261  (Panas)
+ * TCS < 0.7  → Kuning  #e9c46a  (Sedang)
+ * TCS ≥ 0.7  → Hijau   #1a936f  (Nyaman)
+ */
+const TCS_COLOR_EXPRESSION: maplibregl.ExpressionSpecification = [
+  'step', ['get', 'tcs'],
+  '#e63946',   // default (tcs < 0.3)
+  0.3, '#f4a261',   // 0.3 ≤ tcs < 0.5
+  0.5, '#e9c46a',   // 0.5 ≤ tcs < 0.7
+  0.7, '#1a936f',   // tcs ≥ 0.7
+];
+
+/** Helpers */
+function tcsGradeLabel(tcs: number): string {
+  if (tcs >= 0.7) return '🟢 Nyaman';
+  if (tcs >= 0.5) return '🟡 Sedang';
+  if (tcs >= 0.3) return '🟠 Panas';
+  return '🔴 Sangat Panas';
+}
+
+function tcsGradeColor(tcs: number): string {
+  if (tcs >= 0.7) return '#1a936f';
+  if (tcs >= 0.5) return '#e9c46a';
+  if (tcs >= 0.3) return '#f4a261';
+  return '#e63946';
+}
+
 export interface MapViewProps {
   origin: Coordinate | null;
   destination: Coordinate | null;
@@ -23,22 +55,22 @@ export interface MapViewRef {
   flyTo: (coord: Coordinate) => void;
 }
 
-const MapView = forwardRef<MapViewRef, MapViewProps>(({ 
-  origin, 
-  destination, 
+const MapView = forwardRef<MapViewRef, MapViewProps>(({
+  origin,
+  destination,
   routeData,
   selectedRouteType,
-  onMapClick, 
-  onCCTVClick, 
+  onMapClick,
+  onCCTVClick,
   clickMode,
-  showTempHeatmap = false
+  showTempHeatmap = false,
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const originMarkerRef = useRef<maplibregl.Marker | null>(null);
   const destMarkerRef = useRef<maplibregl.Marker | null>(null);
   const cctvMarkersRef = useRef<maplibregl.Marker[]>([]);
-  
+
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
 
@@ -49,10 +81,10 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
         zoom: 16,
         essential: true,
       });
-    }
+    },
   }));
 
-  // Initialize map once
+  // ── Initialize map once ──────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -74,27 +106,30 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
 
     map.on('load', () => {
       addBuildings(map);
-      loadHeatmap(map);
+      loadTCSLayer(map);
+      loadTempHeatmapLayer(map);
     });
 
-    // Reload TCS segments when user pans/zooms to show only segments in viewport
+    // Reload TCS segments when user pans/zooms (viewport-based loading)
     map.on('moveend', () => {
-      if (!map.getSource('thermal')) return; // only refresh if already initialized
+      if (!map.getSource('thermal')) return;
       const b = map.getBounds();
       const bbox = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
-      fetchThermalSegments(bbox).then(segments => {
-        const src = map.getSource('thermal') as maplibregl.GeoJSONSource | undefined;
-        if (!src) return;
-        const geojson: GeoJSON.FeatureCollection = {
-          type: 'FeatureCollection',
-          features: segments.map(seg => ({
-            type: 'Feature' as const,
-            geometry: seg.geometry,
-            properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
-          })),
-        };
-        src.setData(geojson);
-      }).catch(err => console.warn('[Viewport] TCS reload failed:', err));
+      fetchThermalSegments(bbox)
+        .then(segments => {
+          const src = map.getSource('thermal') as maplibregl.GeoJSONSource | undefined;
+          if (!src) return;
+          const geojson: GeoJSON.FeatureCollection = {
+            type: 'FeatureCollection',
+            features: segments.map(seg => ({
+              type: 'Feature' as const,
+              geometry: seg.geometry,
+              properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
+            })),
+          };
+          src.setData(geojson);
+        })
+        .catch(err => console.warn('[Viewport] TCS reload failed:', err));
     });
 
     map.on('click', (e) => {
@@ -109,74 +144,64 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
     };
   }, []);
 
-  // Update cursor based on clickMode
+  // ── Update cursor based on clickMode ────────────────────────────────────
   useEffect(() => {
     if (mapRef.current) {
       mapRef.current.getCanvas().style.cursor = clickMode === 'origin' ? 'crosshair' : 'cell';
     }
   }, [clickMode]);
 
-  // Toggle between TCS segments and Temperature Heatmap
+  // ── Toggle between TCS and Temperature Heatmap layers ───────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    const setVisibility = () => {
-      if (showTempHeatmap) {
-        if (map.getLayer('temp-heatmap-layer')) map.setLayoutProperty('temp-heatmap-layer', 'visibility', 'visible');
-        if (map.getLayer('thermal-glow')) map.setLayoutProperty('thermal-glow', 'visibility', 'none');
-        if (map.getLayer('thermal-line')) map.setLayoutProperty('thermal-line', 'visibility', 'none');
-      } else {
-        if (map.getLayer('temp-heatmap-layer')) map.setLayoutProperty('temp-heatmap-layer', 'visibility', 'none');
-        if (map.getLayer('thermal-glow')) map.setLayoutProperty('thermal-glow', 'visibility', 'visible');
-        if (map.getLayer('thermal-line')) map.setLayoutProperty('thermal-line', 'visibility', 'visible');
+    const applyVisibility = () => {
+      const tcsVisible = showTempHeatmap ? 'none' : 'visible';
+      const tempVisible = showTempHeatmap ? 'visible' : 'none';
+      (['thermal-glow', 'thermal-line'] as const).forEach(id => {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', tcsVisible);
+      });
+      if (map.getLayer('temp-heatmap-layer')) {
+        map.setLayoutProperty('temp-heatmap-layer', 'visibility', tempVisible);
       }
     };
 
-    if (map.isStyleLoaded()) {
-      setVisibility();
-    } else {
-      map.once('load', setVisibility);
-    }
+    if (map.isStyleLoaded()) applyVisibility();
+    else map.once('load', applyVisibility);
   }, [showTempHeatmap]);
 
-  // Update origin marker
+  // ── Update origin marker ─────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     originMarkerRef.current?.remove();
     if (origin) {
-      const el = document.createElement('div');
-      el.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#457b9d;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:white;font-size:10px;font-weight:bold;';
-      el.innerHTML = 'A';
-      originMarkerRef.current = new maplibregl.Marker({ element: el })
+      originMarkerRef.current = new maplibregl.Marker({ element: createPinMarker('A', '#457b9d') })
         .setLngLat([origin.lng, origin.lat])
         .addTo(map);
     }
   }, [origin]);
 
-  // Update destination marker
+  // ── Update destination marker ────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     destMarkerRef.current?.remove();
     if (destination) {
-      const el = document.createElement('div');
-      el.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#e63946;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:white;font-size:10px;font-weight:bold;';
-      el.innerHTML = 'B';
-      destMarkerRef.current = new maplibregl.Marker({ element: el })
+      destMarkerRef.current = new maplibregl.Marker({ element: createPinMarker('B', '#e63946') })
         .setLngLat([destination.lng, destination.lat])
         .addTo(map);
     }
   }, [destination]);
 
-  // Display routes and CCTV
+  // ── Display routes and CCTV ──────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
     const applyRoutes = async () => {
-      // Cleanup all route layers including outlines
+      // Cleanup all previous route layers & sources
       ['route-0-outline', 'route-1-outline', 'route-0', 'route-1'].forEach(id => {
         if (map.getLayer(id)) map.removeLayer(id);
       });
@@ -193,7 +218,7 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
       routeData.routes.forEach((route, i) => {
         if (!route.geometry?.coordinates?.length) return;
         const id = `route-${i}`;
-        
+
         map.addSource(id, {
           type: 'geojson',
           data: { type: 'Feature', geometry: route.geometry, properties: {} },
@@ -202,9 +227,9 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
         const isSelected = selectedRouteType === route.type;
         const isComfy = route.type === 'most_comfortable';
 
-        // Add outline for selected route
+        // White outline for selected route
         if (isSelected) {
-           map.addLayer({
+          map.addLayer({
             id: `${id}-outline`,
             type: 'line',
             source: id,
@@ -230,30 +255,23 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
         });
       });
 
-      // Fit map to route bounds instead of just origin/destination
+      // Fit map to route bounds
       if (routeData.routes.length > 0) {
         let minLng = 180, maxLng = -180, minLat = 90, maxLat = -90;
         routeData.routes.forEach(route => {
-          if (route.geometry?.coordinates) {
-            route.geometry.coordinates.forEach(([lng, lat]) => {
-              if (lng < minLng) minLng = lng;
-              if (lng > maxLng) maxLng = lng;
-              if (lat < minLat) minLat = lat;
-              if (lat > maxLat) maxLat = lat;
-            });
-          }
+          route.geometry?.coordinates?.forEach(([lng, lat]) => {
+            if (lng < minLng) minLng = lng;
+            if (lng > maxLng) maxLng = lng;
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+          });
         });
-
-        // Add small buffer if the min/max are identical (very short route)
         if (minLng === maxLng) { minLng -= 0.001; maxLng += 0.001; }
         if (minLat === maxLat) { minLat -= 0.001; maxLat += 0.001; }
 
         map.fitBounds(
-          [
-            [minLng, minLat],
-            [maxLng, maxLat],
-          ],
-          { padding: {top: 80, bottom: 80, left: 380, right: 80}, maxZoom: 16 }
+          [[minLng, minLat], [maxLng, maxLat]] as LngLatBoundsLike,
+          { padding: { top: 80, bottom: 80, left: 380, right: 80 }, maxZoom: 16 }
         );
       } else if (origin && destination) {
         map.fitBounds(
@@ -261,15 +279,14 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
             [Math.min(origin.lng, destination.lng) - 0.005, Math.min(origin.lat, destination.lat) - 0.005],
             [Math.max(origin.lng, destination.lng) + 0.005, Math.max(origin.lat, destination.lat) + 0.005],
           ],
-          { padding: {top: 80, bottom: 80, left: 380, right: 80}, maxZoom: 16 }
+          { padding: { top: 80, bottom: 80, left: 380, right: 80 }, maxZoom: 16 }
         );
       }
 
       // Fetch CCTV along the comfortable route
       const comfyRoute = routeData.routes.find(r => r.type === 'most_comfortable') || routeData.routes[0];
-      if (comfyRoute && comfyRoute.geometry.coordinates.length > 0) {
+      if (comfyRoute?.geometry.coordinates.length > 0) {
         const coords = comfyRoute.geometry.coordinates;
-        // Sample 3 points along the route to find cameras
         const samples = [
           coords[Math.floor(coords.length * 0.25)],
           coords[Math.floor(coords.length * 0.5)],
@@ -282,19 +299,11 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
           cameras.forEach(cam => {
             if (!seenIds.has(cam.cctv_id)) {
               seenIds.add(cam.cctv_id);
-              
-              const el = document.createElement('div');
-              el.style.cssText = 'width:24px;height:24px;background:white;border-radius:4px;box-shadow:0 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;';
-              el.innerHTML = '📷';
-              el.onclick = (e) => {
-                e.stopPropagation();
-                onCCTVClick(cam);
-              };
-
+              const el = createCCTVMarker();
+              el.onclick = (e) => { e.stopPropagation(); onCCTVClick(cam); };
               const marker = new maplibregl.Marker({ element: el })
                 .setLngLat([cam.lng, cam.lat])
                 .addTo(map);
-              
               cctvMarkersRef.current.push(marker);
             }
           });
@@ -302,11 +311,8 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
       }
     };
 
-    if (map.isStyleLoaded()) {
-      applyRoutes();
-    } else {
-      map.once('load', applyRoutes);
-    }
+    if (map.isStyleLoaded()) applyRoutes();
+    else map.once('load', applyRoutes);
   }, [routeData, selectedRouteType, origin, destination, onCCTVClick]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
@@ -315,6 +321,23 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
 MapView.displayName = 'MapView';
 export default MapView;
 
+// ── Helper: create custom DOM pin marker ────────────────────────────────────
+function createPinMarker(label: string, color: string): HTMLDivElement {
+  const el = document.createElement('div');
+  el.style.cssText = `width:24px;height:24px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:bold;`;
+  el.innerHTML = label;
+  return el;
+}
+
+// ── Helper: create CCTV camera marker ───────────────────────────────────────
+function createCCTVMarker(): HTMLDivElement {
+  const el = document.createElement('div');
+  el.style.cssText = 'width:24px;height:24px;background:white;border-radius:4px;box-shadow:0 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;';
+  el.innerHTML = '📷';
+  return el;
+}
+
+// ── Map layer: 3D Buildings ──────────────────────────────────────────────────
 function addBuildings(map: maplibregl.Map) {
   if (!map.getSource('openmaptiles')) return;
   const layers = map.getStyle().layers || [];
@@ -335,64 +358,82 @@ function addBuildings(map: maplibregl.Map) {
   }, labelLayer?.id);
 }
 
-async function loadHeatmap(map: maplibregl.Map) {
+// ── Map layer: TCS Comfort Line Layer ───────────────────────────────────────
+async function loadTCSLayer(map: maplibregl.Map) {
   try {
-    // 1. Load TCS Line Heatmap
     const segments = await fetchThermalSegments();
-    if (segments.length) {
-      const geojson: GeoJSON.FeatureCollection = {
-        type: 'FeatureCollection',
-        features: segments.map(seg => ({
-          type: 'Feature' as const,
-          geometry: seg.geometry,
-          properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
-        })),
-      };
+    if (!segments.length) return;
 
-      map.addSource('thermal', { type: 'geojson', data: geojson });
+    const geojson: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: segments.map(seg => ({
+        type: 'Feature' as const,
+        geometry: seg.geometry,
+        properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
+      })),
+    };
 
-      // Glow layer
-      map.addLayer({
-        id: 'thermal-glow',
-        type: 'line',
-        source: 'thermal',
-        paint: {
-          'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
-            0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 12],
-          'line-opacity': 0.3,
-          'line-blur': 3,
-        },
-      });
+    map.addSource('thermal', { type: 'geojson', data: geojson });
 
-      // Crisp layer
-      map.addLayer({
-        id: 'thermal-line',
-        type: 'line',
-        source: 'thermal',
-        paint: {
-          'line-color': ['interpolate', ['linear'], ['get', 'tcs'],
-            0, '#e63946', 0.3, '#f4a261', 0.5, '#e9c46a', 0.7, '#88d498', 1, '#1a936f'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 5],
-          'line-opacity': 0.75,
-        },
-      });
+    // Soft glow layer (background halo)
+    map.addLayer({
+      id: 'thermal-glow',
+      type: 'line',
+      source: 'thermal',
+      paint: {
+        'line-color': TCS_COLOR_EXPRESSION,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 12],
+        'line-opacity': 0.25,
+        'line-blur': 4,
+      },
+    });
 
-      // Click popup
-      map.on('click', 'thermal-line', (e) => {
-        const props = e.features?.[0]?.properties;
-        if (!props) return;
-        const tcs = Number(props.tcs).toFixed(2);
-        const label = Number(tcs) >= 0.7 ? 'Nyaman' : Number(tcs) >= 0.4 ? 'Sedang' : 'Panas';
-        const color = Number(tcs) >= 0.7 ? '#1a936f' : Number(tcs) >= 0.4 ? '#f4a261' : '#e63946';
-        new maplibregl.Popup({ closeOnClick: true })
-          .setLngLat(e.lngLat)
-          .setHTML(`<div style="font-size:12px;font-family:Inter,sans-serif"><b style="color:${color}">TCS: ${tcs}</b><br/><span style="color:#666">${label}</span></div>`)
-          .addTo(map);
-      });
-    }
+    // Crisp categorical color layer
+    map.addLayer({
+      id: 'thermal-line',
+      type: 'line',
+      source: 'thermal',
+      paint: {
+        'line-color': TCS_COLOR_EXPRESSION,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 16, 5],
+        'line-opacity': 0.85,
+      },
+    });
 
-    // 2. Load Temperature Point Heatmap (Apparent Temp)
+    // Detailed popup on segment click
+    map.on('click', 'thermal-line', (e) => {
+      const props = e.features?.[0]?.properties;
+      if (!props) return;
+      const tcs = Number(props.tcs);
+      const grade = tcsGradeLabel(tcs);
+      const color = tcsGradeColor(tcs);
+      new maplibregl.Popup({ closeOnClick: true })
+        .setLngLat(e.lngLat)
+        .setHTML(`
+          <div style="font-size:12px;font-family:Inter,sans-serif;padding:4px 2px">
+            <div style="font-weight:700;color:${color};font-size:13px">${grade}</div>
+            <div style="color:#555;margin-top:2px">TCS: <b>${tcs.toFixed(3)}</b></div>
+            <div style="color:#888;font-size:11px;margin-top:1px">Klik rute untuk detail segmen</div>
+          </div>
+        `)
+        .addTo(map);
+    });
+
+    // Pointer cursor on hover
+    map.on('mouseenter', 'thermal-line', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'thermal-line', () => {
+      map.getCanvas().style.cursor = '';
+    });
+  } catch (err) {
+    console.error('[TCS Layer] Failed to load:', err);
+  }
+}
+
+// ── Map layer: Temperature Heatmap (UHI) ────────────────────────────────────
+async function loadTempHeatmapLayer(map: maplibregl.Map) {
+  try {
     const tempGeojson = await fetchTemperatureHeatmap();
     map.addSource('temp-heatmap', { type: 'geojson', data: tempGeojson });
 
@@ -405,25 +446,22 @@ async function loadHeatmap(map: maplibregl.Map) {
         'heatmap-weight': ['interpolate', ['linear'], ['get', 'temp'], 28, 0, 45, 1],
         'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 12, 1, 18, 3],
         'heatmap-color': [
-          'interpolate',
-          ['linear'],
-          ['heatmap-density'],
-          0, 'rgba(33,102,172,0)',
+          'interpolate', ['linear'], ['heatmap-density'],
+          0,   'rgba(33,102,172,0)',
           0.2, 'rgb(103,169,207)',
           0.4, 'rgb(209,229,240)',
           0.6, 'rgb(253,219,199)',
           0.8, 'rgb(239,138,98)',
-          1, 'rgb(178,24,43)'
+          1,   'rgb(178,24,43)',
         ],
         'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 12, 15, 18, 40],
-        'heatmap-opacity': 0.8
-      }
+        'heatmap-opacity': 0.8,
+      },
     });
 
-    // Hidden by default
+    // Hidden by default — toggled by layer switcher
     map.setLayoutProperty('temp-heatmap-layer', 'visibility', 'none');
-
   } catch (err) {
-    console.error('[Heatmap] Failed to load:', err);
+    console.error('[Temp Heatmap] Failed to load:', err);
   }
 }

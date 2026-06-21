@@ -2,17 +2,78 @@
 
 import { useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { SegmentedControl, Text } from '@mantine/core';
 import SearchPanel from '@/components/SearchPanel';
 import RoutePanel from '@/components/RoutePanel';
 import CCTVModal from '@/components/CCTVModal';
+import MapLayerSwitcher from '@/components/MapLayerSwitcher';
+import TCSLegend from '@/components/TCSLegend';
 import type { Coordinate, RouteResponse, HeatTolerance, CCTVCamera } from '@/types';
 import { fetchRoute } from '@/services/api';
 import { notifications } from '@mantine/notifications';
 import { MapViewRef } from '@/components/MapView';
 
-// Dynamic import for MapView to disable SSR
+// Dynamic import for MapView to disable SSR (maplibre uses browser APIs)
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
+
+// ── Styles ─────────────────────────────────────────────────────────────────
+
+const SIDEBAR_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  top: 12,
+  left: 12,
+  width: 340,
+  zIndex: 50,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px',
+  maxHeight: 'calc(100vh - 24px)',
+  pointerEvents: 'none',
+};
+
+const CLICK_MODE_BANNER_BASE: React.CSSProperties = {
+  position: 'absolute',
+  top: 0,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  color: 'white',
+  padding: '4px 16px',
+  borderBottomLeftRadius: '8px',
+  borderBottomRightRadius: '8px',
+  fontSize: '12px',
+  fontWeight: 'bold',
+  zIndex: 40,
+  boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+};
+
+const WEATHER_BANNER_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  top: 48,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  background: '#f59f00',
+  color: 'white',
+  padding: '6px 20px',
+  borderRadius: '8px',
+  fontSize: '13px',
+  fontWeight: 'bold',
+  zIndex: 45,
+  boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+  maxWidth: '90%',
+  textAlign: 'center',
+};
+
+const BOTTOM_CONTROLS_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  bottom: 24,
+  left: 24,
+  zIndex: 50,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+  pointerEvents: 'auto',
+};
+
+// ── Component ───────────────────────────────────────────────────────────────
 
 export default function NavigationPage() {
   const [origin, setOrigin] = useState<Coordinate | null>(null);
@@ -38,7 +99,6 @@ export default function NavigationPage() {
   }, [clickMode]);
 
   const handleLocateGPS = useCallback((coord: Coordinate) => {
-    // Fly to the new location when user uses GPS or Autocomplete
     mapRef.current?.flyTo(coord);
   }, []);
 
@@ -58,7 +118,7 @@ export default function NavigationPage() {
     try {
       const data = await fetchRoute(origin, destination, tolerance);
       setRouteData(data);
-      if (data.routes && data.routes.length > 0) {
+      if (data.routes?.length > 0) {
         setSelectedRouteType(data.heat_budget?.recommended_route || data.routes[0].type);
       }
     } catch {
@@ -74,6 +134,7 @@ export default function NavigationPage() {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      {/* Map (full-screen background) */}
       <MapView
         ref={mapRef}
         origin={origin}
@@ -85,38 +146,19 @@ export default function NavigationPage() {
         clickMode={clickMode}
         showTempHeatmap={showTempHeatmap}
       />
-      
-      {/* Banner mode indikator */}
-      <div style={{
-        position: 'absolute',
-        top: 0,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        background: clickMode === 'origin' ? '#1a936f' : '#e63946',
-        color: 'white',
-        padding: '4px 16px',
-        borderBottomLeftRadius: '8px',
-        borderBottomRightRadius: '8px',
-        fontSize: '12px',
-        fontWeight: 'bold',
-        zIndex: 40,
-        boxShadow: '0 2px 10px rgba(0,0,0,0.2)'
-      }}>
+
+      {/* Click mode indicator banner */}
+      <div
+        style={{
+          ...CLICK_MODE_BANNER_BASE,
+          background: clickMode === 'origin' ? '#1a936f' : '#e63946',
+        }}
+      >
         {clickMode === 'origin' ? '📍 Mode Pilih Titik Awal' : '🎯 Mode Pilih Tujuan'}
       </div>
 
-      <div style={{
-        position: 'absolute',
-        top: 12,
-        left: 12,
-        width: 340,
-        zIndex: 50,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-        maxHeight: 'calc(100vh - 24px)',
-        pointerEvents: 'none' // allow clicking map through the gap
-      }}>
+      {/* Left sidebar: search + route panel */}
+      <div style={SIDEBAR_STYLE}>
         <div style={{ pointerEvents: 'auto' }}>
           <SearchPanel
             origin={origin}
@@ -143,58 +185,23 @@ export default function NavigationPage() {
           </div>
         )}
       </div>
-      <CCTVModal
-        camera={cctvModal}
-        onClose={() => setCctvModal(null)}
-      />
 
-      {/* Weather Warning Banner */}
+      {/* CCTV modal */}
+      <CCTVModal camera={cctvModal} onClose={() => setCctvModal(null)} />
+
+      {/* Weather warning banner */}
       {routeData?.weather_alert && (
-        <div style={{
-          position: 'absolute',
-          top: 48,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: '#f59f00',
-          color: 'white',
-          padding: '6px 20px',
-          borderRadius: '8px',
-          fontSize: '13px',
-          fontWeight: 'bold',
-          zIndex: 45,
-          boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
-          maxWidth: '90%',
-          textAlign: 'center'
-        }}>
+        <div style={WEATHER_BANNER_STYLE}>
           ⚠️ {routeData.weather_alert}
         </div>
       )}
 
-      {/* Map Layer Switcher Control */}
-      <div style={{
-        position: 'absolute',
-        bottom: 24,
-        left: 24,
-        zIndex: 50,
-        background: 'white',
-        padding: '8px 12px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        pointerEvents: 'auto'
-      }}>
-        <Text size="xs" fw={700} c="dimmed">LAYER PETA</Text>
-        <SegmentedControl
-          size="xs"
+      {/* Bottom-left controls: TCS legend + layer switcher */}
+      <div style={BOTTOM_CONTROLS_STYLE}>
+        {!showTempHeatmap && <TCSLegend />}
+        <MapLayerSwitcher
           value={showTempHeatmap ? 'temp' : 'tcs'}
           onChange={(val) => setShowTempHeatmap(val === 'temp')}
-          data={[
-            { label: 'Kenyamanan Jalan (TCS)', value: 'tcs' },
-            { label: 'Suhu Udara (UHI)', value: 'temp' },
-          ]}
-          color="teal"
         />
       </div>
     </div>

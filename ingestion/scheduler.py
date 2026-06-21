@@ -116,6 +116,7 @@ def run_spark_jobs():
         "spark_jobs/job_traffic_aqi.py",
         "spark_jobs/job_thermal_comfort.py",
         "spark_jobs/job_graph_weight.py",
+        "spark_jobs/job_tcs_predictor.py",
     ]
 
     for job in jobs:

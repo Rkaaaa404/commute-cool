@@ -71,3 +71,11 @@ frontend/dashboard/build/
 spark-warehouse/
 metastore_db/
 derby.log
+
+# --- Next.js ---
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+
+# --- Backup directories ---
+frontend_vite_backup/

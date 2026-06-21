@@ -5,6 +5,7 @@
 __pycache__
 *.pyc
 .kiro
+.antigravity
 notebooks
 docs
 *.md

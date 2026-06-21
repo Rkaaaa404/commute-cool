@@ -95,40 +95,42 @@ async def get_priority_corridors():
                 FROM thermal_comfort_scores
                 ORDER BY segment_id, computed_at DESC
             ),
-            segment_scores AS (
+            corridors AS (
                 SELECT
-                    s.segment_id,
-                    s.name,
-                    s.highway_type,
-                    COALESCE(tcs.tcs_value, 0.5) as tcs_value,
-                    COALESCE(tcs.shade_ratio, 0.2) as shade_ratio,
-                    COALESCE(tcs.apparent_temp, 34.0) as apparent_temp,
-                    COALESCE(tcs.aqi_value, 50.0) as aqi_value,
-                    COALESCE(tcs.traffic_level, 0.3) as traffic_level,
-                    -- Count nearby transit stops (proxy for pedestrian volume)
-                    (SELECT COUNT(*) FROM transit_stops t
-                     WHERE ST_DWithin(t.geom, s.geom, 0.003)) as nearby_transit,
-                    -- Nearest transit stop name
-                    (SELECT t.name FROM transit_stops t
-                     ORDER BY t.geom <-> s.geom LIMIT 1) as nearest_transit_name
+                    COALESCE(s.name, 'Unnamed ' || s.highway_type || ' corridor') as corridor_name,
+                    ARRAY_AGG(s.segment_id) as segment_ids,
+                    AVG(COALESCE(tcs.tcs_value, 0.5)) as avg_tcs,
+                    AVG(COALESCE(tcs.shade_ratio, 0.2)) as avg_shade,
+                    AVG(COALESCE(tcs.apparent_temp, 34.0)) as avg_temp,
+                    AVG(COALESCE(tcs.aqi_value, 50.0)) as avg_aqi,
+                    AVG(COALESCE(tcs.traffic_level, 0.3)) as avg_traffic,
+                    ST_Centroid(ST_Collect(s.geom)) as corridor_center
                 FROM latest_tcs tcs
                 JOIN segments s ON s.segment_id = tcs.segment_id
                 WHERE tcs.tcs_value < 0.55
+                GROUP BY COALESCE(s.name, 'Unnamed ' || s.highway_type || ' corridor')
             )
             SELECT
-                COALESCE(name, 'Unnamed ' || highway_type || ' corridor') as corridor_name,
-                ARRAY_AGG(segment_id) as segment_ids,
-                AVG(tcs_value) as avg_tcs,
-                AVG(shade_ratio) as avg_shade,
-                AVG(apparent_temp) as avg_temp,
-                AVG(aqi_value) as avg_aqi,
-                AVG(traffic_level) as avg_traffic,
-                MAX(nearby_transit) as max_transit,
-                nearest_transit_name,
-                -- Priority score: lower TCS + higher pedestrian volume = higher priority
-                (1.0 - AVG(tcs_value)) * 0.6 + LEAST(MAX(nearby_transit)::float / 3.0, 1.0) * 0.4 as priority_score
-            FROM segment_scores
-            GROUP BY COALESCE(name, 'Unnamed ' || highway_type || ' corridor'), nearest_transit_name
+                corridor_name,
+                segment_ids,
+                avg_tcs,
+                avg_shade,
+                avg_temp,
+                avg_aqi,
+                avg_traffic,
+                -- Count nearby transit stops
+                (SELECT COUNT(*) FROM transit_stops t
+                 WHERE ST_DWithin(t.geom, corridor_center, 0.003)) as max_transit,
+                -- Nearest transit stop name
+                (SELECT t.name FROM transit_stops t
+                 ORDER BY t.geom <-> corridor_center LIMIT 1) as nearest_transit_name,
+                -- Priority score
+                (1.0 - avg_tcs) * 0.6 + LEAST(
+                    (SELECT COUNT(*) FROM transit_stops t
+                     WHERE ST_DWithin(t.geom, corridor_center, 0.003))::float / 3.0,
+                    1.0
+                ) * 0.4 as priority_score
+            FROM corridors
             ORDER BY priority_score DESC
             LIMIT 15
         """)
@@ -291,3 +293,42 @@ async def get_temperature_heatmap():
         ]
     }
     return geojson
+
+
+@router.get("/simulations")
+async def get_tcs_simulations():
+    """Get AI/ML scenario simulation comparison results.
+    
+    Ranks segments that would benefit most from urban greening/tree planting.
+    """
+    async with get_conn() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                s.segment_id,
+                s.name as street_name,
+                ST_AsGeoJSON(s.geom) as geometry,
+                sim.current_tcs,
+                sim.predicted_tcs_green,
+                sim.predicted_tcs_cool,
+                sim.tcs_improvement_green,
+                sim.tcs_improvement_cool
+            FROM tcs_simulations sim
+            JOIN segments s ON s.segment_id = sim.segment_id
+            ORDER BY sim.tcs_improvement_green DESC
+            LIMIT 50
+        """)
+        
+    return [
+        {
+            "segment_id": row["segment_id"],
+            "street_name": row["street_name"] or f"Segment #{row['segment_id']}",
+            "geometry": json.loads(row["geometry"]) if isinstance(row["geometry"], str) else row["geometry"],
+            "current_tcs": round(row["current_tcs"], 3),
+            "predicted_tcs_green": round(row["predicted_tcs_green"], 3),
+            "predicted_tcs_cool": round(row["predicted_tcs_cool"], 3),
+            "tcs_improvement_green": round(row["tcs_improvement_green"], 3),
+            "tcs_improvement_cool": round(row["tcs_improvement_cool"], 3),
+        }
+        for row in rows
+    ]
+

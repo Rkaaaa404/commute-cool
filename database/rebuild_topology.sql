@@ -1,13 +1,99 @@
-CREATE OR REPLACE FUNCTION build_routing_topology() RETURNS void AS $$
-BEGIN
-    DROP TABLE IF EXISTS segments_noded CASCADE;
-    PERFORM pgr_nodeNetwork('segments', 0.0001, 'segment_id', 'geom', 'segments_noded');
-    PERFORM pgr_createTopology('segments_noded', 0.0001, 'geom', 'id');
-    PERFORM pgr_analyzeGraph('segments_noded', 0.0001, 'geom', 'id');
-    RAISE NOTICE 'Routing topology built successfully (pgr_nodeNetwork)';
-END;
-$$ LANGUAGE plpgsql;
+-- ============================================================
+-- COMMUTE-COOL: Rebuild Routing Topology
+-- Jalankan ini setelah data OSM di-ingested ke tabel segments.
+--
+-- Cara jalankan:
+--   docker exec commute_cool_db psql -U cc_user -d commute_cool \
+--     -f /tmp/rebuild_topology.sql
+--
+-- Atau via API: POST /api/admin/rebuild-topology
+-- ============================================================
 
-SELECT build_routing_topology();
-SELECT COUNT(*) AS noded_segments FROM segments_noded;
-SELECT COUNT(*) AS noded_nodes FROM segments_noded_vertices_pgr;
+\timing on
+
+DO $$
+BEGIN
+    RAISE NOTICE '=== MEMBANGUN TOPOLOGI ROUTING ===';
+    RAISE NOTICE 'Tolerance: 0.0005 derajat (~55 meter)';
+    RAISE NOTICE 'Input: % segmen', (SELECT COUNT(*) FROM segments);
+END $$;
+
+-- Bersihkan tabel lama (termasuk tabel vertices pgRouting)
+DROP TABLE IF EXISTS segments_noded CASCADE;
+
+-- Buat tabel segments_noded sebagai copy 1-to-1 dari segments.
+-- Data OSM pedestrian sudah dipotong per intersection, sehingga
+-- noding ulang tidak diperlukan. pgr_createTopology dengan
+-- tolerance 0.0005° (~55m) cukup untuk menggabungkan endpoint
+-- yang hampir bertemu.
+CREATE TABLE segments_noded AS
+SELECT
+    segment_id  AS id,
+    segment_id  AS old_id,
+    1           AS sub_id,
+    NULL::integer AS source,
+    NULL::integer AS target,
+    length_m,
+    geom
+FROM segments
+WHERE geom IS NOT NULL
+  AND length_m IS NOT NULL
+  AND length_m > 0;
+
+ALTER TABLE segments_noded ADD PRIMARY KEY (id);
+CREATE INDEX idx_segments_noded_geom ON segments_noded USING GIST (geom);
+CREATE INDEX idx_segments_noded_old_id ON segments_noded (old_id);
+
+DO $$
+BEGIN
+    RAISE NOTICE 'segments_noded dibuat: % edges', (SELECT COUNT(*) FROM segments_noded);
+    RAISE NOTICE 'Menjalankan pgr_createTopology dengan tolerance=0.0005...';
+END $$;
+
+-- Bangun topologi: isi kolom source dan target, buat tabel vertices
+-- Tolerance 0.0005° (~55m) lebih besar dari default (0.0001°/11m)
+-- agar endpoint segmen yang hampir bertemu bisa digabungkan.
+SELECT pgr_createTopology(
+    'segments_noded',
+    0.0005,          -- tolerance ~55 meter
+    'geom',
+    'id',
+    'source',
+    'target',
+    rows_where := 'true',
+    clean := true    -- reset source/target sebelum rebuild
+);
+
+DO $$
+DECLARE
+    v_edges   bigint;
+    v_verts   bigint;
+    v_null    bigint;
+    v_main_cc bigint;
+BEGIN
+    SELECT COUNT(*) INTO v_edges FROM segments_noded;
+    SELECT COUNT(*) INTO v_verts FROM segments_noded_vertices_pgr;
+    SELECT COUNT(*) INTO v_null FROM segments_noded WHERE source IS NULL OR target IS NULL;
+    SELECT MAX(cnt) INTO v_main_cc
+      FROM (
+        SELECT component, COUNT(*) AS cnt
+        FROM pgr_connectedComponents(
+          'SELECT id, source::integer, target::integer,
+                  length_m AS cost, length_m AS reverse_cost
+           FROM segments_noded
+           WHERE source IS NOT NULL AND target IS NOT NULL'
+        )
+        GROUP BY component
+      ) cc;
+
+    RAISE NOTICE '=== HASIL REBUILD TOPOLOGI ===';
+    RAISE NOTICE 'Total edges       : %', v_edges;
+    RAISE NOTICE 'Total vertices    : %', v_verts;
+    RAISE NOTICE 'NULL source/target: %', v_null;
+    RAISE NOTICE 'Komponen terbesar : % nodes', v_main_cc;
+END $$;
+
+-- Tampilkan ringkasan
+SELECT COUNT(*) AS noded_edges    FROM segments_noded;
+SELECT COUNT(*) AS noded_vertices FROM segments_noded_vertices_pgr;
+SELECT COUNT(*) AS null_source    FROM segments_noded WHERE source IS NULL;
