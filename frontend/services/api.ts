@@ -100,7 +100,7 @@ export async function fetchDashboardUHI(): Promise<{
   summary: { total_segments: number; critical_segments: number; avg_city_tcs: number };
 } | null> {
   try {
-    const res = await fetch(`${API_BASE}/dashboard/uhi`);
+    const res = await fetch(`${API_BASE}/dashboard/uhi`, { cache: 'no-store' });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -119,7 +119,7 @@ export async function fetchPriorityCorridors(): Promise<{
   }>;
 } | null> {
   try {
-    const res = await fetch(`${API_BASE}/dashboard/priority-corridors`);
+    const res = await fetch(`${API_BASE}/dashboard/priority-corridors`, { cache: 'no-store' });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -134,7 +134,7 @@ export async function fetchWalkabilityStats(): Promise<{
   avg_tcs_city: number;
 } | null> {
   try {
-    const res = await fetch(`${API_BASE}/dashboard/walkability`);
+    const res = await fetch(`${API_BASE}/dashboard/walkability`, { cache: 'no-store' });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -148,11 +148,60 @@ export async function fetchActiveAlerts(): Promise<Array<{
   severity: string;
 }>> {
   try {
-    const res = await fetch(`${API_BASE}/dashboard/active-alerts`);
+    const res = await fetch(`${API_BASE}/dashboard/active-alerts`, { cache: 'no-store' });
     if (!res.ok) return [];
     return res.json();
   } catch {
     return [];
+  }
+}
+
+export interface HeatZone {
+  segment_id: number;
+  street_name: string;
+  highway_type: string;
+  has_shade_tree: boolean;
+  current_tcs: number;
+  apparent_temp: number;
+  shade_ratio: number;
+  predicted_tcs_green: number;
+  predicted_tcs_cool: number;
+  improvement_pct: number;
+  severity: 'critical' | 'hot' | 'warm';
+}
+
+export interface HourlyTrendPoint {
+  hour: number;
+  label: string;
+  tcs_current: number;
+  tcs_green_scenario: number;
+  tcs_cool_scenario: number;
+  apparent_temp: number;
+}
+
+export interface HeatPredictionData {
+  summary: {
+    total_segments: number;
+    hot_segments: number;
+    warm_segments: number;
+    cool_segments: number;
+    hot_percentage: number;
+    avg_city_tcs: number;
+    avg_apparent_temp: number;
+    max_apparent_temp: number;
+    peak_heat_hour: number;
+  };
+  hourly_trend: HourlyTrendPoint[];
+  hot_zones: HeatZone[];
+}
+
+export async function fetchHeatPrediction(): Promise<HeatPredictionData | null> {
+  try {
+    const res = await fetch(`${API_BASE}/dashboard/heat-prediction`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
   }
 }
 

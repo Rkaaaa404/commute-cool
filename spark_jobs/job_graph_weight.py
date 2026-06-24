@@ -113,8 +113,8 @@ def compute_edge_weights(spark: SparkSession) -> DataFrame:
         col("base_cost"),
         col("thermal_penalty"),
         col("total_cost"),
-        lit(str(valid_from)).alias("valid_from"),
-        lit(str(valid_until)).alias("valid_until"),
+        lit(str(valid_from)).cast("timestamp").alias("valid_from"),
+        lit(str(valid_until)).cast("timestamp").alias("valid_until"),
     )
 
     return result_df
@@ -131,6 +131,7 @@ def write_to_db(df: DataFrame):
     (
         df.write
         .mode("overwrite")  # Replace old weights
+        .option("truncate", "true")
         .jdbc(JDBC_URL, "edge_weights", properties=JDBC_PROPS)
     )
 

@@ -8,8 +8,11 @@ import {
   fetchPriorityCorridors,
   fetchWalkabilityStats,
   fetchActiveAlerts,
+  fetchHeatPrediction,
 } from '@/services/api';
+import type { HeatPredictionData } from '@/services/api';
 import { tcsToBadgeColor } from '@/components/TCSLegend';
+import HeatPredictionTab from '@/components/HeatPredictionTab';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,23 +45,26 @@ export default function DashboardPage() {
   const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [walkability, setWalkability] = useState<WalkabilityStats | null>(null);
   const [alerts, setAlerts] = useState<Array<{ title: string; description: string; severity: string }>>([]);
+  const [heatPrediction, setHeatPrediction] = useState<HeatPredictionData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
       try {
-        const [uhiData, corrData, walkData, alertsData] = await Promise.all([
+        const [uhiData, corrData, walkData, alertsData, heatData] = await Promise.all([
           fetchDashboardUHI(),
           fetchPriorityCorridors(),
           fetchWalkabilityStats(),
           fetchActiveAlerts(),
+          fetchHeatPrediction(),
         ]);
 
         if (uhiData) setSummary(uhiData.summary);
         if (corrData) setCorridors(corrData.corridors || []);
         if (walkData) setWalkability(walkData);
         if (alertsData) setAlerts(alertsData);
+        if (heatData) setHeatPrediction(heatData);
       } catch (err) {
         console.error('[Dashboard] Failed to load data:', err);
       } finally {
@@ -105,6 +111,7 @@ export default function DashboardPage() {
           <Tabs.Tab value="overview" leftSection={<IconFlame size={14} />}>Overview</Tabs.Tab>
           <Tabs.Tab value="corridors" leftSection={<IconTree size={14} />}>Koridor Prioritas</Tabs.Tab>
           <Tabs.Tab value="walkability" leftSection={<IconWalk size={14} />}>Walkability</Tabs.Tab>
+          <Tabs.Tab value="heat-prediction" leftSection={<IconFlame size={14} />} style={{ color: heatPrediction ? '#f4a261' : undefined }}>🔥 Prediksi Panas</Tabs.Tab>
         </Tabs.List>
 
         {/* ── Overview tab ─────────────────────────────────────────────── */}
@@ -209,6 +216,15 @@ export default function DashboardPage() {
             </SimpleGrid>
           ) : (
             <Text c="dimmed">Data walkability tidak tersedia.</Text>
+          )}
+        </Tabs.Panel>
+
+        {/* ── Heat Prediction tab ────────────────────────────────────────── */}
+        <Tabs.Panel value="heat-prediction" pt="md">
+          {heatPrediction ? (
+            <HeatPredictionTab data={heatPrediction} />
+          ) : (
+            <Text c="dimmed">Data prediksi panas tidak tersedia. Pastikan Spark pipeline sudah berjalan.</Text>
           )}
         </Tabs.Panel>
       </Tabs>

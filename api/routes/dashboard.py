@@ -330,3 +330,158 @@ async def get_tcs_simulations():
         for row in rows
     ]
 
+
+@router.get("/heat-prediction")
+async def get_heat_prediction():
+    """Prediksi zona panas harian menggunakan data dari Spark pipeline.
+
+    Mengembalikan:
+    - hot_zones: 50 segmen dengan TCS terendah, beserta prediksi skenario hijau/cooling
+    - hourly_trend: Simulasi rata-rata TCS kota per jam (06:00-21:00)
+    - summary: Statistik ringkasan area panas
+    """
+    # Surabaya typical daily temperature curve multipliers (relative to baseline)
+    # Normalized so that 12:00 = peak heat (factor=1.0), 06:00 = coolest (factor=-0.15)
+    HOURLY_HEAT_FACTOR = {
+        6:  -0.15,
+        7:  -0.10,
+        8:  -0.04,
+        9:   0.02,
+        10:  0.08,
+        11:  0.13,
+        12:  0.16,
+        13:  0.15,
+        14:  0.13,
+        15:  0.08,
+        16:  0.02,
+        17: -0.03,
+        18: -0.08,
+        19: -0.11,
+        20: -0.13,
+        21: -0.14,
+    }
+
+    async with get_conn() as conn:
+        # Get top 50 hottest segments with simulation predictions
+        hot_rows = await conn.fetch("""
+            WITH latest_tcs AS (
+                SELECT DISTINCT ON (segment_id)
+                    segment_id, tcs_value, apparent_temp, shade_ratio, aqi_value
+                FROM thermal_comfort_scores
+                ORDER BY segment_id, computed_at DESC
+            )
+            SELECT
+                s.segment_id,
+                COALESCE(s.name, s.highway_type || ' #' || s.segment_id::text) as street_name,
+                s.highway_type,
+                s.has_shade_tree,
+                tcs.tcs_value as current_tcs,
+                tcs.apparent_temp,
+                tcs.shade_ratio,
+                tcs.aqi_value,
+                sim.predicted_tcs_green,
+                sim.predicted_tcs_cool,
+                sim.tcs_improvement_green,
+                sim.tcs_improvement_cool,
+                sim.simulated_at
+            FROM latest_tcs tcs
+            JOIN tcs_simulations sim ON tcs.segment_id = sim.segment_id
+            JOIN segments s ON tcs.segment_id = s.segment_id
+            ORDER BY tcs.tcs_value ASC
+            LIMIT 50
+        """)
+
+        # City-wide aggregate stats
+        agg_row = await conn.fetchrow("""
+            WITH latest_tcs AS (
+                SELECT DISTINCT ON (segment_id) tcs_value, apparent_temp
+                FROM thermal_comfort_scores
+                ORDER BY segment_id, computed_at DESC
+            )
+            SELECT
+                COUNT(*) FILTER (WHERE tcs_value < 0.5) as hot_count,
+                COUNT(*) FILTER (WHERE tcs_value BETWEEN 0.5 AND 0.65) as warm_count,
+                COUNT(*) FILTER (WHERE tcs_value > 0.65) as cool_count,
+                COUNT(*) as total_count,
+                AVG(tcs_value) as avg_tcs,
+                AVG(apparent_temp) as avg_apparent_temp,
+                MAX(apparent_temp) as max_apparent_temp
+            FROM latest_tcs
+        """)
+
+        # Average TCS and simulation values for hourly trend base
+        trend_base = await conn.fetchrow("""
+            WITH latest_tcs AS (
+                SELECT DISTINCT ON (segment_id) segment_id, tcs_value
+                FROM thermal_comfort_scores
+                ORDER BY segment_id, computed_at DESC
+            )
+            SELECT
+                AVG(tcs.tcs_value) as avg_current_tcs,
+                AVG(sim.predicted_tcs_green) as avg_green_tcs,
+                AVG(sim.predicted_tcs_cool) as avg_cool_tcs
+            FROM latest_tcs tcs
+            JOIN tcs_simulations sim ON tcs.segment_id = sim.segment_id
+        """)
+
+    avg_tcs = float(trend_base["avg_current_tcs"] or 0.68)
+    avg_green = float(trend_base["avg_green_tcs"] or 0.72)
+    avg_cool = float(trend_base["avg_cool_tcs"] or 0.70)
+
+    # Build hourly trend data — simulate TCS changes throughout the day
+    hourly_trend = []
+    for hour, factor in HOURLY_HEAT_FACTOR.items():
+        tcs_current = round(max(0.1, min(1.0, avg_tcs - factor * 0.3)), 3)
+        tcs_green = round(max(0.1, min(1.0, avg_green - factor * 0.22)), 3)
+        tcs_cool = round(max(0.1, min(1.0, avg_cool - factor * 0.18)), 3)
+        apparent_temp = round(float(agg_row["avg_apparent_temp"] or 32.5) + factor * 4.5, 1)
+        hourly_trend.append({
+            "hour": hour,
+            "label": f"{hour:02d}:00",
+            "tcs_current": tcs_current,
+            "tcs_green_scenario": tcs_green,
+            "tcs_cool_scenario": tcs_cool,
+            "apparent_temp": apparent_temp,
+        })
+
+    total = int(agg_row["total_count"] or 1)
+    hot_count = int(agg_row["hot_count"] or 0)
+    warm_count = int(agg_row["warm_count"] or 0)
+    cool_count = int(agg_row["cool_count"] or 0)
+
+    # Build hot zones list
+    hot_zones = []
+    for row in hot_rows:
+        current = float(row["current_tcs"])
+        green = float(row["predicted_tcs_green"])
+        cool_pred = float(row["predicted_tcs_cool"])
+        improvement_pct = round((green - current) / max(current, 0.01) * 100, 1)
+        hot_zones.append({
+            "segment_id": row["segment_id"],
+            "street_name": row["street_name"],
+            "highway_type": row["highway_type"] or "path",
+            "has_shade_tree": row["has_shade_tree"] or False,
+            "current_tcs": round(current, 3),
+            "apparent_temp": round(float(row["apparent_temp"] or 32.5), 1),
+            "shade_ratio": round(float(row["shade_ratio"] or 0.0), 2),
+            "predicted_tcs_green": round(green, 3),
+            "predicted_tcs_cool": round(cool_pred, 3),
+            "improvement_pct": improvement_pct,
+            "severity": "critical" if current < 0.45 else "hot" if current < 0.55 else "warm",
+        })
+
+    return {
+        "summary": {
+            "total_segments": total,
+            "hot_segments": hot_count,
+            "warm_segments": warm_count,
+            "cool_segments": cool_count,
+            "hot_percentage": round(hot_count / total * 100, 1),
+            "avg_city_tcs": round(float(agg_row["avg_tcs"] or 0.68), 3),
+            "avg_apparent_temp": round(float(agg_row["avg_apparent_temp"] or 32.5), 1),
+            "max_apparent_temp": round(float(agg_row["max_apparent_temp"] or 35.0), 1),
+            "peak_heat_hour": 12,
+        },
+        "hourly_trend": hourly_trend,
+        "hot_zones": hot_zones,
+    }

@@ -152,6 +152,7 @@ def train_and_simulate():
         (
             simulations_final_df.write
             .mode("overwrite")
+            .option("truncate", "true")
             .jdbc(JDBC_URL, "tcs_simulations", properties=JDBC_PROPS)
         )
         

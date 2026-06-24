@@ -155,7 +155,7 @@ def run(air_temp: float = None):
         result_df = (
             ndvi_df
             .join(lst_df, "segment_id", "outer")
-            .withColumn("computed_at", lit(str(today)))
+            .withColumn("computed_at", lit(str(today)).cast("date"))
         )
 
         row_count = result_df.count()
@@ -172,6 +172,7 @@ def run(air_temp: float = None):
         (
             result_df.write
             .mode("overwrite")
+            .option("truncate", "true")
             .jdbc(JDBC_URL, "segment_raster_scores", properties=JDBC_PROPS)
         )
 

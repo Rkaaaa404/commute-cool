@@ -18,6 +18,7 @@ Fitur utama:
 - **City-Wide Thermal Heatmap** -- visualisasi kenyamanan termal seluruh jalur pedestrian Surabaya
 - **Live CCTV Preview** -- lihat kondisi jalan real-time dari 444 CCTV Dishub Surabaya
 - **Dashboard Pemerintah** -- koridor prioritas penghijauan, statistik walkability (data real dari pipeline)
+- **Prediksi & Simulasi Panas AI/ML** -- simulasi interaktif dampak intervensi tata kota (penghijauan & cool pavement) berbasis Spark MLlib
 
 ---
 
@@ -133,6 +134,40 @@ Setiap tingkat toleransi panas memiliki batas durasi paparan sinar matahari lang
 
 ---
 
+## Prediksi & Simulasi Panas AI/ML
+
+COMMUTE-COOL mengintegrasikan pemodelan prediktif berbasis machine learning untuk membantu perencana kota menganalisis efektivitas langkah mitigasi panas (UHI) secara interaktif.
+
+### Model Machine Learning (PySpark MLlib)
+*   **Algoritma:** `DecisionTreeRegressor` (dari library `pyspark.ml.regression`).
+*   **Target (Label):** `tcs_value` (Thermal Comfort Score).
+*   **Fitur Input (Assembled Features):**
+    1.  `avg_ndvi` (Kerapatan vegetasi/indeks hijau)
+    2.  `avg_lst` (Suhu permukaan jalan)
+    3.  `avg_shade` (Rasio keteduhan rata-rata)
+    4.  `congestion_ratio` (Rasio kemacetan lalu lintas)
+    5.  `aqi_value` (Kualitas udara AQI)
+*   **Tujuan:** Mempelajari hubungan non-linear dari kondisi lingkungan perkotaan terhadap tingkat kenyamanan pejalan kaki.
+
+### Simulasi Skenario Intervensi
+Model AI yang telah dilatih digunakan untuk menjalankan simulasi "What-If" pada seluruh segmen jalan Surabaya:
+1.  **🌿 Skenario Hijau (Green Scenario):** Mensimulasikan program penanaman pohon kota secara masif dengan menaikkan nilai `avg_ndvi` sebesar `+0.25` (maksimal `0.72`).
+2.  **❄️ Skenario Cool Pavement:** Mensimulasikan penggantian aspal dengan material pemantul panas (*cool pavement*), menurunkan suhu permukaan (`avg_lst`) sebesar `-3.5°C`.
+
+Hasil prediksi dari kedua skenario ini dibandingkan dengan kondisi asli (`current_tcs`) untuk menghitung persentase potensi perbaikan kenyamanan jalan (`improvement_pct`).
+
+### Letak Berkas Kode & Implementasi
+*   **Spark ML Pipeline:** [job_tcs_predictor.py](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/spark_jobs/job_tcs_predictor.py) — Melatih model regresi pohon keputusan menggunakan HDFS data lakehouse, menjalankan proyeksi skenario hijau & cool pavement, lalu menyimpannya ke tabel `tcs_simulations` di database PostgreSQL.
+*   **Backend API Endpoints:** [dashboard.py](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/api/routes/dashboard.py) (endpoint `GET /api/dashboard/heat-prediction`) — Menyediakan data statistik agregat kota, tren jam-demi-jam per skenario, dan daftar 50 segmen jalan terpanas (Top 50 Hottest) beserta proyeksi mitigasinya.
+*   **Frontend Dashboard UI:**
+    *   [page.tsx](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/frontend/app/page.tsx) — Integrasi menu tab baru `🔥 Prediksi Panas` dan pemanggilan API.
+    *   [HeatPredictionTab.tsx](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/frontend/components/HeatPredictionTab.tsx) — Halaman dashboard interaktif yang dilengkapi:
+        *   **Hourly Simulator Slider:** Menggeser jam (06:00 - 21:00 WIB) untuk mensimulasikan kurva temperatur harian Surabaya.
+        *   **Scenario Toggles:** Memilih skenario tata kota (Saat Ini, +Pohon, +Cooling) untuk melihat respons perbaikan TCS kota dan jalan terpanas secara real-time.
+        *   **Mantine charts & tables:** Visualisasi grafik tren TCS harian kota dan tabel interaktif "Top 20 Zona Terpanas" (menampilkan street name, current TCS, improvements, dan severity status).
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -209,19 +244,40 @@ Buka browser Anda di: `http://localhost:3000`
 
 ---
 
-## Thermal Comfort Score (TCS)
+## Thermal Comfort Score (TCS) & Urban Heat Island (UHI)
 
-```
-TCS = 0.35 * shade_score
-    + 0.30 * temperature_score
-    + 0.15 * aqi_score
-    + 0.10 * traffic_score
-    + 0.10 * surface_score
+### A. Formula Utama TCS
+Setiap segmen jalan dihitung tingkat kenyamanan termalnya (skala $0.0$ hingga $1.0$) setiap jam:
+$$\text{TCS} = 0.35 \times \text{shade\_score} + 0.30 \times \text{temp\_score} + 0.15 \times \text{aqi\_score} + 0.10 \times \text{traffic\_score} + 0.10 \times \text{surface\_score}$$
 
-Range: 0.0 (sangat panas) -> 1.0 (sangat nyaman)
-```
+Di mana sub-skor didefinisikan sebagai berikut:
 
-Visualisasi di peta (4 grade kategoris):
+1. **Shade Score (Naungan - Bobot 35%):**
+   $$\text{shade\_score} = 0.7 \times \text{shade\_ratio} + 0.3 \times \text{ndvi\_proxy}$$
+   *   `shade_ratio`: Rasio jalan tertutup bayangan bangunan/pohon (kalkulasi elevasi matahari dinamis berdasarkan koordinat Surabaya).
+   *   `ndvi_proxy`: Kerapatan vegetasi berdasarkan jumlah pohon (`natural=tree` di OSM) dalam radius 30m.
+
+2. **Temperature Score (Suhu Terasa & Permukaan - Bobot 30%):**
+   $$\text{temp\_score} = 1.0 - \frac{T_{gabungan} - T_{min}}{T_{max} - T_{min}}$$
+   *   $T_{gabungan} = 0.6 \times \text{apparent\_temp} + 0.4 \times \text{LST}$
+   *   $\text{apparent\_temp}$: Suhu semu yang dirasakan tubuh pejalan kaki (diperoleh dari Open-Meteo).
+   *   $\text{LST}$: Land Surface Temperature (suhu aspal = suhu udara + koreksi material trotoar: Asphalt +8°C, Concrete +6°C, Paving +4°C, Grass -2°C).
+   *   $T_{min} = 28^\circ\text{C}$ (Threshold dingin nyaman), $T_{max} = 45^\circ\text{C}$ (Threshold panas ekstrem).
+
+3. **AQI Score (Kualitas Udara - Bobot 15%):**
+   $$\text{aqi\_score} = 1.0 - \frac{\text{AQI\_value}}{150.0} \quad (\text{dibatasi di rentang } [0.0, 1.0])$$
+   *   Jika AQI melampaui 150 (sangat tidak sehat), skor pernapasan otomatis anjlok ke 0.0.
+
+4. **Traffic Score (Kepadatan Lalu Lintas - Bobot 10%):**
+   *   Mengevaluasi paparan polusi suara dan gas buang lokal kendaraan berdasarkan kemacetan lalu lintas real-time (`congestion_ratio` dari TomTom API).
+
+5. **Surface Score (Kualitas Trotoar - Bobot 10%):**
+   *   Ditentukan dari material paving/concrete (`surface_type`) dan kerataan jalan (`smoothness`).
+
+### B. UHI (Urban Heat Island) Hotspot
+Visualisasi peta UHI (*City-Wide Thermal Heatmap*) memetakan daerah kantong panas di perkotaan dengan menampilkan segmen jalan yang memiliki LST (*Land Surface Temperature*) tertinggi dan TCS terendah.
+
+Visualisasi di peta dikelompokkan ke dalam **4 grade warna kategoris**:
 - 🟢 **Nyaman** (TCS ≥ 0.7) — hijau gelap, teduh dan sejuk
 - 🟡 **Sedang** (TCS 0.5–0.7) — kuning, cukup nyaman
 - 🟠 **Panas** (TCS 0.3–0.5) — oranye, terasa panas
