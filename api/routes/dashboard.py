@@ -194,13 +194,11 @@ async def get_walkability_stats():
             transit_access AS (
                 SELECT
                     ts.stop_id,
-                    ts.name,
-                    -- Get average TCS of segments within 750m walking radius
-                    (SELECT AVG(tcs.tcs_value) FROM segments s
-                     JOIN latest_tcs tcs ON tcs.segment_id = s.segment_id
-                     WHERE ST_DWithin(s.geom, ts.geom, 0.007)  -- ~750m
-                    ) as avg_surrounding_tcs
+                    AVG(tcs.tcs_value) as avg_surrounding_tcs
                 FROM transit_stops ts
+                LEFT JOIN segments s ON ST_DWithin(s.geom, ts.geom, 0.007)
+                LEFT JOIN latest_tcs tcs ON tcs.segment_id = s.segment_id
+                GROUP BY ts.stop_id
             )
             SELECT
                 COUNT(*) as total_stops,

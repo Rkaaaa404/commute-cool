@@ -239,6 +239,20 @@ BEGIN
         clean := true
     );
 
+    -- Add component_size column to vertices and populate it
+    ALTER TABLE segments_noded_vertices_pgr ADD COLUMN IF NOT EXISTS component_size integer;
+
+    WITH cc AS (
+        SELECT node, count(*) OVER (PARTITION BY component) as sz
+        FROM pgr_connectedComponents(
+            'SELECT id, source::integer, target::integer, 1.0 as cost FROM segments_noded WHERE source IS NOT NULL AND target IS NOT NULL'
+        )
+    )
+    UPDATE segments_noded_vertices_pgr v
+    SET component_size = cc.sz
+    FROM cc
+    WHERE v.id = cc.node;
+
     RAISE NOTICE 'Routing topology built successfully (tolerance=0.0005)';
 END;
 $$ LANGUAGE plpgsql;

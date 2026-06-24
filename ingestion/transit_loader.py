@@ -4,6 +4,7 @@ Sources:
 - database/seed_transit.sql (manual curated data)
 - OSM Overpass query for public_transport stops
 """
+from __future__ import annotations
 
 import json
 import os

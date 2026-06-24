@@ -111,12 +111,21 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
     });
 
     // Reload TCS segments when user pans/zooms (viewport-based loading)
+    // IMPORTANT: Never replace existing data with empty results to avoid
+    // TCS colors disappearing when API returns 0 segments momentarily.
     map.on('moveend', () => {
       if (!map.getSource('thermal')) return;
+      // Skip reload when TCS layer is hidden (UHI mode active)
+      if (map.getLayer('thermal-line') &&
+          map.getLayoutProperty('thermal-line', 'visibility') === 'none') return;
       const b = map.getBounds();
       const bbox = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
       fetchThermalSegments(bbox)
         .then(segments => {
+          // GUARD: Only update data if we got results back.
+          // If API returns empty (network blip, bbox too tight, etc.)
+          // keep the existing data visible — do NOT clear it.
+          if (!segments.length) return;
           const src = map.getSource('thermal') as maplibregl.GeoJSONSource | undefined;
           if (!src) return;
           const geojson: GeoJSON.FeatureCollection = {
@@ -165,10 +174,37 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({
       if (map.getLayer('temp-heatmap-layer')) {
         map.setLayoutProperty('temp-heatmap-layer', 'visibility', tempVisible);
       }
+
+      // When switching BACK to TCS, always re-fetch to guarantee data is shown.
+      // This prevents blank TCS map after coming back from UHI or any
+      // state change that may have cleared the source data.
+      if (!showTempHeatmap && map.getSource('thermal')) {
+        const b = map.getBounds();
+        const bbox = { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
+        fetchThermalSegments(bbox)
+          .then(segments => {
+            if (!segments.length) return;  // Guard: keep existing data if nothing returned
+            const src = map.getSource('thermal') as maplibregl.GeoJSONSource | undefined;
+            if (!src) return;
+            const geojson: GeoJSON.FeatureCollection = {
+              type: 'FeatureCollection',
+              features: segments.map(seg => ({
+                type: 'Feature' as const,
+                geometry: seg.geometry,
+                properties: { tcs: seg.tcs_value, segment_id: seg.segment_id },
+              })),
+            };
+            src.setData(geojson);
+          })
+          .catch(err => console.warn('[TCS Toggle] Reload failed:', err));
+      }
     };
 
-    if (map.isStyleLoaded()) applyVisibility();
-    else map.once('load', applyVisibility);
+    if (map.getLayer('thermal-line')) {
+      applyVisibility();
+    } else {
+      map.once('idle', applyVisibility);
+    }
   }, [showTempHeatmap]);
 
   // ── Update origin marker ─────────────────────────────────────────────────

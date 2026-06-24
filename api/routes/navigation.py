@@ -12,9 +12,15 @@ router = APIRouter()
 
 # Penalty multiplier per heat tolerance level
 # Applies only to the "most_comfortable" route cost calculation.
-# Low tolerance → higher penalty on hot segments → Dijkstra aggressively seeks shade.
-# High tolerance → lower penalty → prefers shorter/faster routes.
-_PENALTY_MULT = {"low": 1.75, "medium": 1.25, "high": 0.8}
+# Uses a SQUARED penalty formula: cost * (1 + mult * (1-tcs)^2 * 5)
+# This creates a non-linear, aggressive penalty on hot segments (TCS < 0.5)
+# and a near-zero penalty on comfortable segments (TCS > 0.7).
+# The 5x amplifier is needed because real-world TCS spread is narrow (~0.05 stddev),
+# so without amplification Dijkstra always finds the same shortest-distance path.
+#   Low tolerance  → mult=5.0  → hot segment penalty up to ~10-15x base cost
+#   Medium tolerance → mult=3.0 → hot segment penalty up to ~5-8x base cost
+#   High tolerance  → mult=0.8  → minimal penalty, prefers shortest distance
+_PENALTY_MULT = {"low": 5.0, "medium": 3.0, "high": 0.8}
 
 
 @router.post("/route", response_model=RouteResponse)
@@ -79,6 +85,7 @@ async def _find_nearest_node(conn, lng: float, lat: float) -> int | None:
     """Find the nearest pgRouting node to a coordinate."""
     row = await conn.fetchrow("""
         SELECT id FROM segments_noded_vertices_pgr
+        WHERE component_size IS NULL OR component_size > 10
         ORDER BY the_geom <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)
         LIMIT 1
     """, lng, lat)
@@ -105,9 +112,14 @@ async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget
         cost_sql = "COALESCE(sn.length_m, 50) / 1.33"  # walking speed m/s
         joins_sql = ""
     else:
-        # Comfortable route: thermal penalty is scaled by the user's tolerance multiplier
-        # TCS=1.0 (cool) → no extra penalty; TCS=0.0 (hot) → max penalty
-        cost_sql = f"(COALESCE(sn.length_m, 50) / 1.33) * (1.0 + (1.0 - COALESCE(tcs.tcs_value, 0.5)) * {penalty_mult})"
+        # Comfortable route: squared thermal penalty for strong route divergence.
+        # Formula: base_cost * (1 + mult * (1-tcs)^2 * 5)
+        # - TCS=0.7 (cool): penalty = mult * 0.09 * 5 = ~0.45 * mult  → small extra cost
+        # - TCS=0.5 (warm): penalty = mult * 0.25 * 5 = 1.25 * mult   → moderate detour
+        # - TCS=0.4 (hot):  penalty = mult * 0.36 * 5 = 1.8 * mult    → strong detour
+        # The squared form creates a sharp nonlinearity that forces Dijkstra to
+        # find genuinely shaded alternative paths even when TCS spread is narrow.
+        cost_sql = f"(COALESCE(sn.length_m, 50) / 1.33) * (1.0 + {penalty_mult} * POWER(1.0 - COALESCE(tcs.tcs_value, 0.5), 2) * 5.0)"
         joins_sql = """
                   LEFT JOIN LATERAL (
                       SELECT tcs_value FROM thermal_comfort_scores

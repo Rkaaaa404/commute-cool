@@ -486,6 +486,10 @@ def main():
     print(f"✓ Pipeline complete in {elapsed:.1f}s")
     print("=" * 60)
 
+    # Explicitly exit so that the JVM daemon process doesn't keep the
+    # container alive and inadvertently restart the pipeline in a loop.
+    sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
