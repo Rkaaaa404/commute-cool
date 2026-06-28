@@ -84,13 +84,26 @@ def fetch_all_traffic() -> list[dict]:
 
     # Save to raw storage
     if results:
-        os.makedirs(TRAFFIC_DIR, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        output_path = os.path.join(TRAFFIC_DIR, f"traffic_{timestamp}.json")
+        filename = f"traffic_{timestamp}.json"
+        
+        # Try writing directly to HDFS (Bronze Layer)
+        from ingestion.hdfs_client import write_to_hdfs
+        data_str = json.dumps(results, indent=2)
+        hdfs_path = f"/lakehouse/bronze/traffic/{filename}"
+        hdfs_success = write_to_hdfs(hdfs_path, data_str)
+        
+        # Save locally as cache/fallback
+        os.makedirs(TRAFFIC_DIR, exist_ok=True)
+        output_path = os.path.join(TRAFFIC_DIR, filename)
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2)
-        print(f"  Saved to: {output_path}")
-
+            f.write(data_str)
+            
+        if hdfs_success:
+            print(f"  Ingested directly to HDFS at: {hdfs_path}")
+        else:
+            print(f"  [HDFS Fallback] Saved locally to: {output_path}")
+            
     return results
 
 

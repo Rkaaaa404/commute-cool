@@ -43,14 +43,21 @@ def create_spark_session() -> SparkSession:
 
 
 def load_latest_tcs(spark: SparkSession) -> DataFrame:
-    """Load most recent TCS per segment."""
-    query = """
-    (SELECT DISTINCT ON (segment_id)
-        segment_id, tcs_value
-    FROM thermal_comfort_scores
-    ORDER BY segment_id, computed_at DESC) as latest_tcs
-    """
-    return spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
+    """Load most recent TCS per segment from HDFS Gold or PostgreSQL fallback."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/thermal_comfort_scores"
+    try:
+        print(f"  Loading latest TCS from HDFS Gold: {gold_path}")
+        return spark.read.parquet(gold_path).select("segment_id", "tcs_value")
+    except Exception as e:
+        print(f"  [Warning] Failed to read TCS from HDFS Gold: {e}. Falling back to PostgreSQL.")
+        query = """
+        (SELECT DISTINCT ON (segment_id)
+            segment_id, tcs_value
+        FROM thermal_comfort_scores
+        ORDER BY segment_id, computed_at DESC) as latest_tcs
+        """
+        return spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
 
 
 def load_segment_lengths(spark: SparkSession) -> DataFrame:
@@ -106,18 +113,25 @@ def compute_edge_weights(spark: SparkSession) -> DataFrame:
         col("base_cost"),
         col("thermal_penalty"),
         col("total_cost"),
-        lit(str(valid_from)).alias("valid_from"),
-        lit(str(valid_until)).alias("valid_until"),
+        lit(str(valid_from)).cast("timestamp").alias("valid_from"),
+        lit(str(valid_until)).cast("timestamp").alias("valid_until"),
     )
 
     return result_df
 
 
 def write_to_db(df: DataFrame):
-    """Write edge weights to PostGIS."""
+    """Write edge weights to HDFS Gold (Parquet) and PostGIS (Serving)."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/edge_weights"
+    print(f"  Writing edge weights to HDFS Gold Parquet: {gold_path}")
+    df.write.mode("overwrite").parquet(gold_path)
+
+    print("  Writing edge weights to PostgreSQL...")
     (
         df.write
         .mode("overwrite")  # Replace old weights
+        .option("truncate", "true")
         .jdbc(JDBC_URL, "edge_weights", properties=JDBC_PROPS)
     )
 

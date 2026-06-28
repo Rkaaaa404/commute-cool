@@ -74,11 +74,13 @@ def run_aqi_collect():
 
 
 def run_bmkg_monitor():
-    """Check BMKG weather alerts."""
+    """Check BMKG weather alerts and load them into database."""
     print(f"[Scheduler] {datetime.now()} - Running BMKG Monitor")
     try:
         from ingestion.bmkg_rss_monitor import fetch_bmkg_alerts
+        from ingestion.alerts_loader import load_alerts_to_db
         fetch_bmkg_alerts()
+        load_alerts_to_db()
     except Exception as e:
         print(f"[Scheduler] BMKG Monitor failed: {e}")
 
@@ -114,6 +116,7 @@ def run_spark_jobs():
         "spark_jobs/job_traffic_aqi.py",
         "spark_jobs/job_thermal_comfort.py",
         "spark_jobs/job_graph_weight.py",
+        "spark_jobs/job_tcs_predictor.py",
     ]
 
     for job in jobs:

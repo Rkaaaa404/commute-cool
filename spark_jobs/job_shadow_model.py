@@ -31,7 +31,7 @@ from spark_jobs.utils.shadow_geometry import (
 
 
 # --- Configuration ---
-from spark_jobs.config import JDBC_URL, JDBC_PROPS
+from spark_jobs.config import JDBC_URL, JDBC_PROPS, DB_USER, DB_PASS, DB_HOST, DB_PORT, DB_NAME
 
 HOURS_OF_DAY = list(range(6, 18))  # 6 AM to 5 PM WIB
 SEGMENT_BUFFER_M = 50.0  # Search radius for nearby buildings/trees
@@ -238,14 +238,21 @@ def _compute_shade_ratios_batch(
         col("segment_id"),
         lit(hour).alias("hour_of_day"),
         col("shade_ratio"),
-        lit(str(target_date)).alias("computed_at"),
+        lit(str(target_date)).cast("date").alias("computed_at"),
     )
 
     return result_df
 
 
-def write_results(df: DataFrame):
-    """Write shade ratio results to PostGIS."""
+def write_results(df: DataFrame, hour: int):
+    """Write shade ratio results to HDFS Gold (Parquet) and PostGIS (Serving)."""
+    from spark_jobs.config import GOLD_DIR
+    gold_path = f"{GOLD_DIR}/segment_shadows/hour_of_day={hour}"
+    
+    # Write to HDFS Gold (Parquet)
+    df.write.mode("overwrite").parquet(gold_path)
+
+    # Write to PostGIS (Serving Layer)
     (
         df.write
         .mode("append")
@@ -262,6 +269,20 @@ def run(target_date: date = None):
     spark = create_spark_session()
 
     try:
+        # Clear existing shadows for target_date to prevent unique constraint conflicts on append
+        import psycopg2
+        db_connection_url = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        try:
+            conn = psycopg2.connect(db_connection_url)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM segment_shadows WHERE computed_at = %s", (target_date,))
+            conn.commit()
+            print(f"  Cleared {cur.rowcount} existing shadows for {target_date} in database")
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"  [Warning] Failed to clear existing shadows: {e}")
+
         segments_df, buildings_df, trees_df = load_data(spark)
         seg_count = segments_df.count()
         print(f"  Segments: {seg_count}, Buildings: {buildings_df.count()}, Trees: {trees_df.count()}")
@@ -276,8 +297,8 @@ def run(target_date: date = None):
                 target_date,
             )
             if result_df is not None:
-                write_results(result_df)
-                print(f"  Hour {hour:02d}: written to DB")
+                write_results(result_df, hour)
+                print(f"  Hour {hour:02d}: written to DB and HDFS Gold")
 
         print("=== Shadow Modeling Complete ===")
     finally:

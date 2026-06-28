@@ -2,12 +2,25 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
 
 from api.models.schemas import RouteRequest, RouteResponse
 from api.db import get_conn
 
 router = APIRouter()
+
+# Penalty multiplier per heat tolerance level
+# Applies only to the "most_comfortable" route cost calculation.
+# Uses a SQUARED penalty formula: cost * (1 + mult * (1-tcs)^2 * 5)
+# This creates a non-linear, aggressive penalty on hot segments (TCS < 0.5)
+# and a near-zero penalty on comfortable segments (TCS > 0.7).
+# The 5x amplifier is needed because real-world TCS spread is narrow (~0.05 stddev),
+# so without amplification Dijkstra always finds the same shortest-distance path.
+#   Low tolerance  → mult=5.0  → hot segment penalty up to ~10-15x base cost
+#   Medium tolerance → mult=3.0 → hot segment penalty up to ~5-8x base cost
+#   High tolerance  → mult=0.8  → minimal penalty, prefers shortest distance
+_PENALTY_MULT = {"low": 5.0, "medium": 3.0, "high": 0.8}
 
 
 @router.post("/route", response_model=RouteResponse)
@@ -41,15 +54,29 @@ async def calculate_route(request: RouteRequest):
         if source_node == target_node:
             return _empty_response(budget_limit)
 
-        # Route 1: Shortest (base cost = distance/speed)
-        shortest = await _run_pgr_route(conn, source_node, target_node, "shortest", budget_limit)
+        # Route 1: Shortest (base cost = distance/speed, unaffected by tolerance)
+        shortest = await _run_pgr_route(conn, source_node, target_node, "shortest", budget_limit, heat_tolerance)
 
-        # Route 2: Most comfortable (total cost = distance + thermal penalty)
-        comfortable = await _run_pgr_route(conn, source_node, target_node, "most_comfortable", budget_limit)
+        # Route 2: Most comfortable (total cost = distance + thermal penalty weighted by tolerance)
+        comfortable = await _run_pgr_route(conn, source_node, target_node, "most_comfortable", budget_limit, heat_tolerance)
+
+        # Get active weather warning summary if any
+        alert_row = await conn.fetchrow("""
+            SELECT title, severity, description
+            FROM weather_alerts
+            WHERE is_active = TRUE
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY severity DESC, issued_at DESC
+            LIMIT 1
+        """)
+        
+        weather_alert_str = None
+        if alert_row:
+            weather_alert_str = f"[{alert_row['severity'].upper()}] {alert_row['title']}: {alert_row['description']}"
 
     return RouteResponse(
         routes=[shortest, comfortable],
-        weather_alert=None,
+        weather_alert=weather_alert_str,
         heat_budget={"budget_limit_min": budget_limit, "recommended_route": "most_comfortable"},
     )
 
@@ -57,46 +84,87 @@ async def calculate_route(request: RouteRequest):
 async def _find_nearest_node(conn, lng: float, lat: float) -> int | None:
     """Find the nearest pgRouting node to a coordinate."""
     row = await conn.fetchrow("""
-        SELECT id FROM segments_vertices_pgr
+        SELECT id FROM segments_noded_vertices_pgr
+        WHERE component_size IS NULL OR component_size > 10
         ORDER BY the_geom <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)
         LIMIT 1
     """, lng, lat)
     return row["id"] if row else None
 
 
-async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget_limit: float) -> dict:
+async def _run_pgr_route(conn, source: int, target: int, route_type: str, budget_limit: float, heat_tolerance: str = "medium") -> dict:
     """Run pgr_dijkstra and build route response."""
-    # Choose cost column based on route type
+    penalty_mult = _PENALTY_MULT.get(heat_tolerance, 1.25)
+
+    # Check for active severe/extreme weather alerts
+    alert_row = await conn.fetchrow("""
+        SELECT alert_id FROM weather_alerts
+        WHERE is_active = TRUE
+          AND (expires_at IS NULL OR expires_at > NOW())
+          AND severity IN ('severe', 'extreme')
+        LIMIT 1
+    """)
+    has_active_alert = alert_row is not None
+
+    # Choose cost column and joins based on route type
     if route_type == "shortest":
-        cost_sql = "COALESCE(s.length_m, 50) / 1.33"  # walking speed m/s
+        # Shortest route is purely distance-based, tolerance has no effect
+        cost_sql = "COALESCE(sn.length_m, 50) / 1.33"  # walking speed m/s
+        joins_sql = ""
     else:
-        cost_sql = "COALESCE(ew.total_cost, COALESCE(s.length_m, 50) / 1.33)"
+        # Comfortable route: squared thermal penalty for strong route divergence.
+        # Formula: base_cost * (1 + mult * (1-tcs)^2 * 5)
+        # - TCS=0.7 (cool): penalty = mult * 0.09 * 5 = ~0.45 * mult  → small extra cost
+        # - TCS=0.5 (warm): penalty = mult * 0.25 * 5 = 1.25 * mult   → moderate detour
+        # - TCS=0.4 (hot):  penalty = mult * 0.36 * 5 = 1.8 * mult    → strong detour
+        # The squared form creates a sharp nonlinearity that forces Dijkstra to
+        # find genuinely shaded alternative paths even when TCS spread is narrow.
+        cost_sql = f"(COALESCE(sn.length_m, 50) / 1.33) * (1.0 + {penalty_mult} * POWER(1.0 - COALESCE(tcs.tcs_value, 0.5), 2) * 5.0)"
+        joins_sql = """
+                  LEFT JOIN LATERAL (
+                      SELECT tcs_value FROM thermal_comfort_scores
+                      WHERE segment_id = sn.old_id
+                      ORDER BY computed_at DESC LIMIT 1
+                  ) tcs ON true
+        """
+
+    # Build weather alert penalty sql
+    if has_active_alert:
+        alert_penalty_sql = """(
+                            CASE WHEN EXISTS (
+                                SELECT 1 FROM weather_alerts wa
+                                WHERE wa.is_active = TRUE
+                                  AND (wa.expires_at IS NULL OR wa.expires_at > NOW())
+                                  AND wa.severity IN (''severe'', ''extreme'')
+                                  AND ST_Intersects(sn.geom, wa.affected_area)
+                            ) THEN 100.0 ELSE 1.0 END
+                        )"""
+    else:
+        alert_penalty_sql = "1.0"
 
     # pgr_dijkstra query with edge_weights join
     try:
         rows = await conn.fetch(f"""
             SELECT
                 r.seq,
-                r.edge as segment_id,
-                s.length_m,
+                sn.old_id as segment_id,
+                sn.length_m as length_m,
                 s.surface_type,
                 COALESCE(tcs.tcs_value, 0.5) as tcs_value,
                 COALESCE(tcs.shade_ratio, 0.2) as shade_ratio,
                 COALESCE(tcs.apparent_temp, 34.0) as apparent_temp,
-                ST_AsGeoJSON(s.geom) as geom_json
+                ST_AsGeoJSON(sn.geom) as geom_json
             FROM pgr_dijkstra(
-                'SELECT segment_id as id, source, target,
-                        {cost_sql} as cost,
-                        {cost_sql} as reverse_cost
-                 FROM segments s
-                 LEFT JOIN LATERAL (
-                     SELECT total_cost FROM edge_weights
-                     WHERE segment_id = s.segment_id
-                     ORDER BY valid_from DESC LIMIT 1
-                 ) ew ON true',
-                $1, $2, directed := false
+                'SELECT sn.id, sn.source::integer, sn.target::integer,
+                        ({cost_sql}) * {alert_penalty_sql} as cost,
+                        ({cost_sql}) * {alert_penalty_sql} as reverse_cost
+                  FROM segments_noded sn
+                  {joins_sql}
+                  WHERE sn.source IS NOT NULL AND sn.target IS NOT NULL',
+                $1::bigint, $2::bigint, directed := false
             ) r
-            JOIN segments s ON r.edge = s.segment_id
+            JOIN segments_noded sn ON r.edge = sn.id
+            JOIN segments s ON sn.old_id = s.segment_id
             LEFT JOIN LATERAL (
                 SELECT tcs_value, shade_ratio, apparent_temp
                 FROM thermal_comfort_scores
@@ -191,25 +259,58 @@ def _empty_response(budget_limit: float) -> RouteResponse:
     )
 
 
-@router.get("/segments/thermal")
-async def get_thermal_segments():
-    """Get segments with TCS values for heatmap overlay."""
+@router.get("/segments/tcs")
+async def get_tcs_segments(
+    west: Optional[float] = Query(None, description="Bbox west longitude"),
+    south: Optional[float] = Query(None, description="Bbox south latitude"),
+    east: Optional[float] = Query(None, description="Bbox east longitude"),
+    north: Optional[float] = Query(None, description="Bbox north latitude"),
+):
+    """Get TCS segments, optionally filtered to a viewport bounding box.
+
+    When bbox params are provided (west/south/east/north), only segments
+    within that viewport are returned — enabling efficient viewport-based
+    loading in the frontend map.
+    """
     async with get_conn() as conn:
-        rows = await conn.fetch("""
-            SELECT
-                s.segment_id,
-                tcs.tcs_value,
-                ST_AsGeoJSON(s.geom) as geometry
-            FROM segments s
-            INNER JOIN LATERAL (
-                SELECT tcs_value
-                FROM thermal_comfort_scores
-                WHERE segment_id = s.segment_id
-                ORDER BY computed_at DESC
-                LIMIT 1
-            ) tcs ON true
-            LIMIT 2000
-        """)
+        if all(isinstance(v, (int, float)) for v in [west, south, east, north]):
+            # Viewport-filtered query using PostGIS GIST index
+            rows = await conn.fetch("""
+                SELECT
+                    s.segment_id,
+                    tcs.tcs_value,
+                    ST_AsGeoJSON(s.geom) as geometry
+                FROM segments s
+                INNER JOIN LATERAL (
+                    SELECT tcs_value
+                    FROM thermal_comfort_scores
+                    WHERE segment_id = s.segment_id
+                    ORDER BY computed_at DESC
+                    LIMIT 1
+                ) tcs ON true
+                WHERE ST_Intersects(
+                    s.geom,
+                    ST_MakeEnvelope($1, $2, $3, $4, 4326)
+                )
+                LIMIT 3000
+            """, west, south, east, north)
+        else:
+            # No bbox: return all (initial load)
+            rows = await conn.fetch("""
+                SELECT
+                    s.segment_id,
+                    tcs.tcs_value,
+                    ST_AsGeoJSON(s.geom) as geometry
+                FROM segments s
+                INNER JOIN LATERAL (
+                    SELECT tcs_value
+                    FROM thermal_comfort_scores
+                    WHERE segment_id = s.segment_id
+                    ORDER BY computed_at DESC
+                    LIMIT 1
+                ) tcs ON true
+                LIMIT 2000
+            """)
 
     return [
         {
@@ -219,3 +320,76 @@ async def get_thermal_segments():
         }
         for row in rows
     ]
+
+
+@router.get("/segments/thermal")
+async def get_thermal_segments():
+    """Alias for /segments/tcs — backward compatibility."""
+    return await get_tcs_segments(None, None, None, None)
+
+
+@router.get("/debug/topology-status")
+async def topology_status():
+    """Diagnostik status topologi pgRouting.
+
+    Mengembalikan jumlah edge, vertex, dan contoh connectivity.
+    Gunakan endpoint ini untuk memverifikasi topologi routing sudah benar.
+    """
+    async with get_conn() as conn:
+        noded_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segments_noded')"
+        )
+        vertices_exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segments_noded_vertices_pgr')"
+        )
+
+        if not noded_exists:
+            return {"status": "error", "message": "Tabel segments_noded tidak ditemukan. Jalankan rebuild topology."}
+
+        edge_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded")
+        vertex_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded_vertices_pgr") if vertices_exists else 0
+        null_source = await conn.fetchval("SELECT COUNT(*) FROM segments_noded WHERE source IS NULL OR target IS NULL")
+        segments_count = await conn.fetchval("SELECT COUNT(*) FROM segments")
+
+        sample_node = await conn.fetchval(
+            "SELECT id FROM segments_noded_vertices_pgr ORDER BY the_geom <-> ST_SetSRID(ST_MakePoint(112.7521, -7.2575), 4326) LIMIT 1"
+        ) if vertices_exists else None
+
+        return {
+            "status": "ok" if (null_source == 0 and edge_count > 0) else "warning",
+            "segments_total": segments_count,
+            "noded_edges": edge_count,
+            "noded_vertices": vertex_count,
+            "edges_with_null_topology": null_source,
+            "sample_center_node_id": sample_node,
+            "topology_ready": null_source == 0 and edge_count > 0 and vertex_count > 0,
+        }
+
+
+@router.post("/admin/rebuild-topology")
+async def rebuild_topology():
+    """Rebuild pgRouting topology dari tabel segments.
+
+    Eksekusi fungsi build_routing_topology() yang akan:
+    1. Drop & recreate tabel segments_noded
+    2. Jalankan pgr_createTopology dengan tolerance 0.0005 derajat (~55m)
+
+    PERHATIAN: Proses ini memakan waktu 1-5 menit.
+    """
+    async with get_conn() as conn:
+        try:
+            await conn.execute("SELECT build_routing_topology()")
+            edge_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded")
+            vertex_count = await conn.fetchval("SELECT COUNT(*) FROM segments_noded_vertices_pgr")
+            null_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM segments_noded WHERE source IS NULL OR target IS NULL"
+            )
+            return {
+                "status": "success",
+                "message": "Topology rebuilt successfully",
+                "noded_edges": edge_count,
+                "noded_vertices": vertex_count,
+                "null_topology_edges": null_count,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Topology rebuild failed: {str(e)}")

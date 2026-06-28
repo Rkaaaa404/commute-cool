@@ -37,38 +37,54 @@ def create_spark_session() -> SparkSession:
     return spark
 
 
-def load_latest_traffic():
-    """Read the most recent traffic data from raw storage."""
-    traffic_dir = os.path.join(RAW_DATA_DIR, "traffic")
-    if not os.path.exists(traffic_dir):
-        return []
+def load_latest_traffic(spark: SparkSession):
+    """Read the most recent traffic data from HDFS Bronze storage."""
+    from spark_jobs.config import BRONZE_DIR
+    hdfs_path = f"{BRONZE_DIR}/traffic"
+    try:
+        df = spark.read.text(hdfs_path)
+        rows = df.collect()
+        traffic_data = []
+        for r in rows:
+            try:
+                traffic_data.extend(json.loads(r[0]))
+            except:
+                pass
+        return traffic_data
+    except Exception as e:
+        print(f"  Error reading traffic from HDFS Bronze: {e}. Falling back to local.")
+        # Fallback to local
+        traffic_dir = os.path.join(RAW_DATA_DIR, "traffic")
+        if not os.path.exists(traffic_dir):
+            return []
+        files = sorted([f for f in os.listdir(traffic_dir) if f.startswith("traffic_")], reverse=True)
+        if not files:
+            return []
+        with open(os.path.join(traffic_dir, files[0]), "r") as f:
+            return json.load(f)
 
-    files = sorted(
-        [f for f in os.listdir(traffic_dir) if f.startswith("traffic_")],
-        reverse=True,
-    )
-    if not files:
-        return []
 
-    with open(os.path.join(traffic_dir, files[0]), "r") as f:
-        return json.load(f)
-
-
-def load_latest_aqi() -> dict:
-    """Read the most recent AQI data from raw storage."""
-    aqi_dir = os.path.join(RAW_DATA_DIR, "aqi")
-    if not os.path.exists(aqi_dir):
+def load_latest_aqi(spark: SparkSession) -> dict:
+    """Read the most recent AQI data from HDFS Bronze storage."""
+    from spark_jobs.config import BRONZE_DIR
+    hdfs_path = f"{BRONZE_DIR}/aqi"
+    try:
+        df = spark.read.text(hdfs_path)
+        rows = df.collect()
+        if rows:
+            return json.loads(rows[-1][0])
         return {"aqi": 50}
-
-    files = sorted(
-        [f for f in os.listdir(aqi_dir) if f.startswith("aqi_")],
-        reverse=True,
-    )
-    if not files:
-        return {"aqi": 50}
-
-    with open(os.path.join(aqi_dir, files[0]), "r") as f:
-        return json.load(f)
+    except Exception as e:
+        print(f"  Error reading AQI from HDFS Bronze: {e}. Falling back to local.")
+        # Fallback to local
+        aqi_dir = os.path.join(RAW_DATA_DIR, "aqi")
+        if not os.path.exists(aqi_dir):
+            return {"aqi": 50}
+        files = sorted([f for f in os.listdir(aqi_dir) if f.startswith("aqi_")], reverse=True)
+        if not files:
+            return {"aqi": 50}
+        with open(os.path.join(aqi_dir, files[0]), "r") as f:
+            return json.load(f)
 
 
 def aggregate_traffic_to_segments(spark: SparkSession) -> DataFrame:
@@ -79,7 +95,7 @@ def aggregate_traffic_to_segments(spark: SparkSession) -> DataFrame:
     Segments without nearby traffic data get a default moderate value.
     """
     print("  Loading traffic data...")
-    traffic_data = load_latest_traffic()
+    traffic_data = load_latest_traffic(spark)
 
     if not traffic_data:
         print("  No traffic data available, using defaults")
@@ -140,7 +156,7 @@ def aggregate_aqi_to_segments(spark: SparkSession) -> float:
     Since AQI stations in Surabaya are sparse, we apply a uniform
     city-wide AQI value to all segments (simplified approach).
     """
-    aqi_data = load_latest_aqi()
+    aqi_data = load_latest_aqi(spark)
     aqi_value = float(aqi_data.get("aqi", 50))
     print(f"  City-wide AQI: {aqi_value}")
     return aqi_value
@@ -161,7 +177,14 @@ def run():
         count = result_df.count()
         print(f"  Aggregated traffic+AQI for {count} segments")
 
-        # Write to a staging table or pass directly to Job 3
+        # Write to HDFS Gold (Parquet)
+        from spark_jobs.config import GOLD_DIR
+        gold_path = f"{GOLD_DIR}/segment_traffic_aqi"
+        print(f"  Writing traffic & AQI to HDFS Gold Parquet: {gold_path}")
+        result_df.write.mode("overwrite").parquet(gold_path)
+
+        # Write to PostgreSQL (Serving Layer Staging Table)
+        print("  Writing traffic & AQI to PostgreSQL staging...")
         (
             result_df.write
             .mode("overwrite")

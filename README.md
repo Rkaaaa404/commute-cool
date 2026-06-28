@@ -4,6 +4,8 @@
 
 Studi Kasus: Kota Surabaya | Final Project Big Data | Semester 4
 
+> 📖 **Dokumentasi Teknis Lengkap:** Detail arsitektur E2E, data lakehouse Medallion HDFS, skema database, dan kalkulasi dinamis pgRouting dapat dibaca di berkas **[README_TECHNICAL.md](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/README_TECHNICAL.md)**.
+
 ---
 
 ## Deskripsi
@@ -16,6 +18,22 @@ Fitur utama:
 - **City-Wide Thermal Heatmap** -- visualisasi kenyamanan termal seluruh jalur pedestrian Surabaya
 - **Live CCTV Preview** -- lihat kondisi jalan real-time dari 444 CCTV Dishub Surabaya
 - **Dashboard Pemerintah** -- koridor prioritas penghijauan, statistik walkability (data real dari pipeline)
+- **Prediksi & Simulasi Panas AI/ML** -- simulasi interaktif dampak intervensi tata kota (penghijauan & cool pavement) berbasis Spark MLlib
+
+---
+
+## 🔥 Pembaruan Sesi Terbaru
+
+1. **Routing Fix (0 km Bug):** Penyebab bug ditemukan — `pgr_createTopology` sebelumnya menggunakan tolerance `0.0001°` (11m) yang terlalu kecil sehingga endpoint segmen jalan tidak tergabungkan. Tolerance diupgrade ke `0.0005°` (~55m) → komponen terbesar graph meningkat dari 1.800 ke 21.000+ nodes → routing kini menghasilkan jarak nyata.
+2. **TCS Map Color Grades:** Visualisasi kenyamanan jalan di peta diubah dari gradasi halus ke **4 grade warna kategoris** yang mudah dibaca:
+   - 🔴 **Sangat Panas** (TCS < 0.3) — merah
+   - 🟠 **Panas** (TCS 0.3–0.5) — oranye
+   - 🟡 **Sedang** (TCS 0.5–0.7) — kuning
+   - 🟢 **Nyaman** (TCS ≥ 0.7) — hijau
+3. **TCS Legend di Peta:** Legenda interaktif ditambahkan di pojok kiri bawah peta navigasi.
+4. **Frontend Refactor:** Komponen `TCSLegend`, `MapLayerSwitcher` diekstrak, API_BASE disentralisasi via env var, fungsi warna TCS dikonsistensikan di semua komponen.
+5. **Admin Endpoints:** Ditambahkan `/api/debug/topology-status` dan `POST /api/admin/rebuild-topology` untuk memudahkan diagnosa dan maintenance.
+6. **Cleanup:** Dihapus `frontend_vite_backup/`, `diagnosis-bug.md`, dan test duplikat dari root directory.
 
 ---
 
@@ -25,12 +43,12 @@ Fitur utama:
 |---|---|
 | Processing | Apache Spark 3.5 (PySpark) + Apache Sedona 1.6 |
 | Database | PostgreSQL 15 + PostGIS 3.3 + pgRouting 3.6 |
-| Routing | pgRouting (pgr_dijkstra) dengan TCS-weighted cost |
-| Backend API | FastAPI + asyncpg |
-| Frontend | React 18 + TypeScript + Mantine UI + Vite |
+| Routing | pgRouting (pgr_dijkstra) dengan `segments_noded` topology |
+| Backend API | FastAPI + asyncpg (Python) |
+| Frontend | Next.js (App Router) + TypeScript + Mantine UI + MapLibre |
 | Map | MapLibre GL JS (3D, free, no token) + OpenFreeMap |
 | CCTV | HLS.js + Dishub Surabaya streams |
-| Deployment | Docker Compose (3 services) |
+| Deployment | Docker Compose (Persistent Volumes) |
 
 ### Sumber Data (semua gratis)
 
@@ -47,64 +65,106 @@ Fitur utama:
 
 ---
 
-## Arsitektur
+## Arsitektur & Medallion HDFS Data Lakehouse
+
+COMMUTE-COOL mengimplementasikan arsitektur **Data Lakehouse** dengan pemisahan layer **Medallion (Bronze, Silver, Gold)** menggunakan **HDFS (Hadoop Distributed File System)** sebagai media penyimpanan Big Data dan **Apache Spark** sebagai engine pemrosesan data terdistribusi.
 
 ```
-Docker Compose (Backend)
-+-------------------------------------------------------------------+
-|                                                                   |
-|  spark-pipeline (one-shot)         api (FastAPI :8000)            |
-|  Ingest APIs -> 5 Spark Jobs       POST /api/route (pgRouting)    |
-|  Build pgRouting topology          GET /api/segments/thermal      |
-|  -> exit 0                         GET /api/dashboard/*           |
-|                                    GET /api/cctv/nearby           |
-|         |  JDBC                         |  asyncpg                |
-|         v                               v                         |
-|  postgres (PostGIS + pgRouting :5432)                             |
-|  segments + TCS + edge_weights + routing topology                 |
-+-------------------------------------------------------------------+
-                          ^
-                          | REST API http://localhost:8000
-                          |
-+-------------------------------------------------------------------+
-|  Frontend (lokal, Vite :3000)                                     |
-|  React + Mantine UI + MapLibre GL JS                              |
-|  Heatmap overlay + route display + CCTV modal + dashboard         |
-+-------------------------------------------------------------------+
+Docker Compose (HDFS Data Lakehouse + Serving Layer)
++-----------------------------------------------------------------------------------------+
+|                                                                                         |
+| [ Ingestion Layer ] ──► [ HDFS Bronze ] ──► [ HDFS Silver ] ──► [ HDFS Gold ]           |
+|  Cuaca, AQI, Traffic      (Raw JSON)         (Parquet Clnd)     (Parquet Aggr)          |
+|                                                                   │                     |
+|                                                                   ▼ [Spark JDBC Sink]   |
+| [ API (FastAPI) ] ◄── [ Serving Layer (PostgreSQL/PostGIS) ] ◄────┘                     |
+|   POST /api/route                                                                       |
+|   GET /api/dashboard/temperature-heatmap                                                |
+|   GET /api/dashboard/active-alerts                                                      |
+|                                                                                         |
++-----------------------------------------------------------------------------------------+
+                                          ^
+                                          | REST API http://localhost:8000
+                                          |
++-----------------------------------------------------------------------------------------+
+| [ Frontend Layer (lokal, npm run dev) ]                                                 |
+|   Next.js (App Router) + Mantine UI + MapLibre GL JS (Hardware-Accelerated Heatmap)     |
++-----------------------------------------------------------------------------------------+
 ```
 
-### Pipeline Data Flow
+### Alur Data Medallion
 
-```
-1. Ingestion: Open-Meteo + WAQI + TomTom -> data/raw/ (JSON)
-2. OSM Load: GeoJSON -> PostGIS (segments, buildings, trees)
-3. pgRouting: Build network topology (pgr_createTopology)
-4. Spark Job 1: NDVI/LST (tree density + surface correction)
-5. Spark Job 2: Shadow Modeling (solar position + building/tree geometry)
-6. Spark Job 4: Traffic + AQI Aggregation per segment
-7. Spark Job 3: Thermal Comfort Score (weighted formula)
-8. Spark Job 5: Graph Weight Export (TCS -> routing penalties)
-9. API: pgr_dijkstra(cost=edge_weights.total_cost) -> route + TCS data
-```
+1. **Bronze Layer:** Data JSON cuaca, kemacetan, kualitas udara, dan RSS BMKG diunggah langsung ke `hdfs://namenode:9000/lakehouse/bronze/`.
+2. **Silver Layer:** Spark membersihkan data Bronze, menstandarkan tipe data/skema, melakukan interpolasi spasial, dan menyimpan hasilnya sebagai **Parquet terpartisi** di `hdfs://namenode:9000/lakehouse/silver/`.
+3. **Gold Layer:** Spark menghitung LST/NDVI proxy, memproyeksikan bayangan 3D gedung & pohon, serta menghitung Thermal Comfort Score (TCS) dan *edge weights* navigasi. Hasilnya disimpan sebagai **Parquet** di `hdfs://namenode:9000/lakehouse/gold/`.
+4. **Serving Layer:** Data Gold disinkronkan ke PostgreSQL/PostGIS agar API FastAPI dapat melakukan kueri pgRouting (`pgr_dijkstra`) dengan latency sangat rendah (< 2 detik).
 
 ---
 
 ## Routing Engine
 
-COMMUTE-COOL menggunakan pgRouting (extension PostgreSQL) untuk graph-based routing:
+COMMUTE-COOL menggunakan pgRouting (extension PostgreSQL) untuk graph-based routing di atas jaringan jalan yang telah di-node (`segments_noded`):
 
-- **Shortest route**: `pgr_dijkstra` dengan cost = jarak/kecepatan jalan kaki
-- **Most comfortable route**: `pgr_dijkstra` dengan cost = `edge_weights.total_cost` (jarak + thermal penalty)
+- **Shortest route**: `pgr_dijkstra` dengan cost = `base_cost` (waktu tempuh standar pejalan kaki tanpa penalti panas).
+- **Most comfortable route**: `pgr_dijkstra` dengan cost = `total_cost` (waktu tempuh standar + penalti paparan panas dinamis berdasarkan toleransi pengguna).
 
-Thermal penalty dihitung dari TCS:
-```
-total_cost = base_cost * (1 + (1 - TCS) * 2)
-```
-- TCS = 1.0 (nyaman) -> penalty 1x (tanpa tambahan)
-- TCS = 0.5 (sedang) -> penalty 2x
-- TCS = 0.0 (panas) -> penalty 3x
+### Formula Biaya Navigasi (Cost)
+Biaya perjalanan (dalam satuan detik) dihitung secara dinamis di API navigasi:
+$$\text{Cost} = \text{base\_cost} \times (1.0 + (1.0 - \text{TCS}) \times \text{multiplier})$$
 
-Ini membuat router secara alami menghindari segmen panas dan memilih rute yang lebih teduh.
+Di mana:
+1. **$\text{base\_cost}$**: Merupakan waktu tempuh standar (dalam detik) di segmen jalan tersebut tanpa memperhitungkan paparan panas.
+   $$\text{base\_cost} = \frac{\text{length\_m}}{1.33\text{ m/s}}$$
+   *(Mengasumsikan kecepatan rata-rata berjalan pejalan kaki adalah 1.33 m/s atau ~4.8 km/jam).*
+2. **$\text{TCS}$**: *Thermal Comfort Score* segmen tersebut (rentang $0.0$ hingga $1.0$).
+3. **$\text{multiplier}$**: Tingkat penalti panas berdasarkan profil toleransi panas pengguna (*Personal Heat Budget*):
+   * **Rendah (Low)**: $1.75$ — Penalti sangat tinggi pada jalan panas agar pgRouting agresif mencari jalur teduh.
+   * **Sedang (Medium)**: $1.25$ — Penalti seimbang.
+   * **Tinggi (High)**: $0.8$ — Penalti rendah, lebih menoleransi jalan panas demi rute yang lebih singkat.
+
+### Personal Heat Budget (Batas Paparan Panas)
+Setiap tingkat toleransi panas memiliki batas durasi paparan sinar matahari langsung yang direkomendasikan (*budget limit*):
+* **Rendah (Low)**: Maksimal **8 menit**
+* **Sedang (Medium)**: Maksimal **15 menit**
+* **Tinggi (High)**: Maksimal **25 menit**
+
+> [!NOTE]
+> **Bagaimana jika tidak ada rute yang memenuhi batas budget?**
+> Jika rute terbaik yang tersedia di lapangan melebihi batas waktu paparan di atas, sistem **tetap mencarikan dan mengembalikan rute** navigasi ternyaman yang ada. Namun, API akan menyertakan flag `"within_heat_budget": false` dalam respon JSON. Frontend mendeteksi flag ini untuk menampilkan peringatan visual ke pejalan kaki bahwa rute terpilih melebihi batas nyaman tubuh mereka, tetapi rute tetap digambar di peta.
+
+---
+
+## Prediksi & Simulasi Panas AI/ML
+
+COMMUTE-COOL mengintegrasikan pemodelan prediktif berbasis machine learning untuk membantu perencana kota menganalisis efektivitas langkah mitigasi panas (UHI) secara interaktif.
+
+### Model Machine Learning (PySpark MLlib)
+*   **Algoritma:** `DecisionTreeRegressor` (dari library `pyspark.ml.regression`).
+*   **Target (Label):** `tcs_value` (Thermal Comfort Score).
+*   **Fitur Input (Assembled Features):**
+    1.  `avg_ndvi` (Kerapatan vegetasi/indeks hijau)
+    2.  `avg_lst` (Suhu permukaan jalan)
+    3.  `avg_shade` (Rasio keteduhan rata-rata)
+    4.  `congestion_ratio` (Rasio kemacetan lalu lintas)
+    5.  `aqi_value` (Kualitas udara AQI)
+*   **Tujuan:** Mempelajari hubungan non-linear dari kondisi lingkungan perkotaan terhadap tingkat kenyamanan pejalan kaki.
+
+### Simulasi Skenario Intervensi
+Model AI yang telah dilatih digunakan untuk menjalankan simulasi "What-If" pada seluruh segmen jalan Surabaya:
+1.  **🌿 Skenario Hijau (Green Scenario):** Mensimulasikan program penanaman pohon kota secara masif dengan menaikkan nilai `avg_ndvi` sebesar `+0.25` (maksimal `0.72`).
+2.  **❄️ Skenario Cool Pavement:** Mensimulasikan penggantian aspal dengan material pemantul panas (*cool pavement*), menurunkan suhu permukaan (`avg_lst`) sebesar `-3.5°C`.
+
+Hasil prediksi dari kedua skenario ini dibandingkan dengan kondisi asli (`current_tcs`) untuk menghitung persentase potensi perbaikan kenyamanan jalan (`improvement_pct`).
+
+### Letak Berkas Kode & Implementasi
+*   **Spark ML Pipeline:** [job_tcs_predictor.py](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/spark_jobs/job_tcs_predictor.py) — Melatih model regresi pohon keputusan menggunakan HDFS data lakehouse, menjalankan proyeksi skenario hijau & cool pavement, lalu menyimpannya ke tabel `tcs_simulations` di database PostgreSQL.
+*   **Backend API Endpoints:** [dashboard.py](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/api/routes/dashboard.py) (endpoint `GET /api/dashboard/heat-prediction`) — Menyediakan data statistik agregat kota, tren jam-demi-jam per skenario, dan daftar 50 segmen jalan terpanas (Top 50 Hottest) beserta proyeksi mitigasinya.
+*   **Frontend Dashboard UI:**
+    *   [page.tsx](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/frontend/app/page.tsx) — Integrasi menu tab baru `🔥 Prediksi Panas` dan pemanggilan API.
+    *   [HeatPredictionTab.tsx](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/frontend/components/HeatPredictionTab.tsx) — Halaman dashboard interaktif yang dilengkapi:
+        *   **Hourly Simulator Slider:** Menggeser jam (06:00 - 21:00 WIB) untuk mensimulasikan kurva temperatur harian Surabaya.
+        *   **Scenario Toggles:** Memilih skenario tata kota (Saat Ini, +Pohon, +Cooling) untuk melihat respons perbaikan TCS kota dan jalan terpanas secara real-time.
+        *   **Mantine charts & tables:** Visualisasi grafik tren TCS harian kota dan tabel interaktif "Top 20 Zona Terpanas" (menampilkan street name, current TCS, improvements, dan severity status).
 
 ---
 
@@ -127,36 +187,40 @@ TOMTOM_API_KEY=your_key
 WAQI_API_TOKEN=your_token
 ```
 
-### Step 2: Jalankan Backend (Docker)
+### Step 2: Jalankan Backend & Database (Docker)
 
+Buka terminal di root folder, lalu jalankan:
 ```powershell
-docker compose up --build
+docker compose up -d --build
 ```
 
-Services:
-- **postgres** -- PostgreSQL + PostGIS + pgRouting, auto-init schema
-- **spark-pipeline** -- Fetch API data, load OSM, build topology, run 5 Spark jobs, exit
-- **api** -- FastAPI on http://localhost:8000
+**⚠️ PENTING UNTUK CLONE PERTAMA KALI (FIRST TIME SETUP):**
+Saat pertama kali dijalankan, sistem tidak memiliki data. Kontainer `spark-pipeline` akan mengunduh jalanan Surabaya dari OpenStreetMap, memotong-motongnya menjadi 105.000 titik persimpangan (*node topology*), dan menghitung nilai *Thermal Comfort Score* (TCS) masing-masing jalan.
+- Proses ini memakan waktu sekitar **10-15 menit** (tergantung koneksi dan CPU).
+- Anda bisa melihat progress-nya dengan command: `docker logs -f commute_cool_spark`
+- Tunggu hingga kontainer `spark-pipeline` selesai dan berstatus `exited (0)`.
 
-Tunggu spark-pipeline selesai (exit 0). Pertama kali butuh 5-10 menit.
+**💡 UNTUK PENGGUNAAN SELANJUTNYA:**
+Karena sistem menggunakan *Persistent Volume* (`pgdata`), data rute yang sudah di-generate **tidak akan hilang**. Besoknya, Anda tidak perlu menunggu 15 menit lagi. Cukup ketik `docker compose up -d` dan API akan menyala dalam hitungan detik.
 
-### Step 3: Jalankan Frontend
+### Step 3: Verifikasi API & Database
 
+Pastikan data rute dan panas sudah berhasil masuk ke database:
+```powershell
+docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT COUNT(*) FROM thermal_comfort_scores;"
+```
+*(Harus menampilkan angka > 105000)*
+
+### Step 4: Jalankan Frontend (Next.js)
+
+Buka terminal baru, pindah ke folder frontend:
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-Buka http://localhost:3000
-
-### Verifikasi Data
-
-```powershell
-docker exec commute_cool_db psql -U cc_user -d commute_cool -c "SELECT COUNT(*) FROM thermal_comfort_scores;"
-```
-
-Harus > 0 setelah pipeline selesai.
+Buka browser Anda di: `http://localhost:3000`
 
 ---
 
@@ -180,22 +244,46 @@ Harus > 0 setelah pipeline selesai.
 
 ---
 
-## Thermal Comfort Score (TCS)
+## Thermal Comfort Score (TCS) & Urban Heat Island (UHI)
 
-```
-TCS = 0.35 * shade_score
-    + 0.30 * temperature_score
-    + 0.15 * aqi_score
-    + 0.10 * traffic_score
-    + 0.10 * surface_score
+### A. Formula Utama TCS
+Setiap segmen jalan dihitung tingkat kenyamanan termalnya (skala $0.0$ hingga $1.0$) setiap jam:
+$$\text{TCS} = 0.35 \times \text{shade\_score} + 0.30 \times \text{temp\_score} + 0.15 \times \text{aqi\_score} + 0.10 \times \text{traffic\_score} + 0.10 \times \text{surface\_score}$$
 
-Range: 0.0 (sangat panas) -> 1.0 (sangat nyaman)
-```
+Di mana sub-skor didefinisikan sebagai berikut:
 
-Visualisasi di peta:
-- Hijau (TCS > 0.7) -- teduh, nyaman
-- Kuning (TCS 0.4-0.7) -- sedang
-- Merah (TCS < 0.4) -- panas
+1. **Shade Score (Naungan - Bobot 35%):**
+   $$\text{shade\_score} = 0.7 \times \text{shade\_ratio} + 0.3 \times \text{ndvi\_proxy}$$
+   *   `shade_ratio`: Rasio jalan tertutup bayangan bangunan/pohon (kalkulasi elevasi matahari dinamis berdasarkan koordinat Surabaya).
+   *   `ndvi_proxy`: Kerapatan vegetasi berdasarkan jumlah pohon (`natural=tree` di OSM) dalam radius 30m.
+
+2. **Temperature Score (Suhu Terasa & Permukaan - Bobot 30%):**
+   $$\text{temp\_score} = 1.0 - \frac{T_{gabungan} - T_{min}}{T_{max} - T_{min}}$$
+   *   $T_{gabungan} = 0.6 \times \text{apparent\_temp} + 0.4 \times \text{LST}$
+   *   $\text{apparent\_temp}$: Suhu semu yang dirasakan tubuh pejalan kaki (diperoleh dari Open-Meteo).
+   *   $\text{LST}$: Land Surface Temperature (suhu aspal = suhu udara + koreksi material trotoar: Asphalt +8°C, Concrete +6°C, Paving +4°C, Grass -2°C).
+   *   $T_{min} = 28^\circ\text{C}$ (Threshold dingin nyaman), $T_{max} = 45^\circ\text{C}$ (Threshold panas ekstrem).
+
+3. **AQI Score (Kualitas Udara - Bobot 15%):**
+   $$\text{aqi\_score} = 1.0 - \frac{\text{AQI\_value}}{150.0} \quad (\text{dibatasi di rentang } [0.0, 1.0])$$
+   *   Jika AQI melampaui 150 (sangat tidak sehat), skor pernapasan otomatis anjlok ke 0.0.
+
+4. **Traffic Score (Kepadatan Lalu Lintas - Bobot 10%):**
+   *   Mengevaluasi paparan polusi suara dan gas buang lokal kendaraan berdasarkan kemacetan lalu lintas real-time (`congestion_ratio` dari TomTom API).
+
+5. **Surface Score (Kualitas Trotoar - Bobot 10%):**
+   *   Ditentukan dari material paving/concrete (`surface_type`) dan kerataan jalan (`smoothness`).
+
+### B. UHI (Urban Heat Island) Hotspot
+Visualisasi peta UHI (*City-Wide Thermal Heatmap*) memetakan daerah kantong panas di perkotaan dengan menampilkan segmen jalan yang memiliki LST (*Land Surface Temperature*) tertinggi dan TCS terendah.
+
+Visualisasi di peta dikelompokkan ke dalam **4 grade warna kategoris**:
+- 🟢 **Nyaman** (TCS ≥ 0.7) — hijau gelap, teduh dan sejuk
+- 🟡 **Sedang** (TCS 0.5–0.7) — kuning, cukup nyaman
+- 🟠 **Panas** (TCS 0.3–0.5) — oranye, terasa panas
+- 🔴 **Sangat Panas** (TCS < 0.3) — merah, hindari
+
+Legenda grade TCS ditampilkan di pojok kiri bawah peta navigasi.
 
 ---
 
@@ -207,38 +295,43 @@ commute-cool/
 |   |-- main.py                  App entry + lifespan
 |   |-- db.py                    asyncpg connection pool
 |   |-- routes/
-|   |   |-- navigation.py       pgRouting route + thermal heatmap
-|   |   |-- dashboard.py        UHI, corridors, walkability
-|   |   +-- cctv.py             CCTV spatial query
+|   |   |-- navigation.py        pgRouting route + TCS heatmap + debug/admin
+|   |   |-- dashboard.py         UHI, corridors, walkability
+|   |   +-- cctv.py              CCTV spatial query
 |   +-- models/
-|       |-- schemas.py           Pydantic models
-|       +-- database.py          SQLAlchemy ORM (reference)
-|-- spark_jobs/                  PySpark + Sedona processing
-|   |-- run_pipeline.py          Full pipeline orchestrator
-|   |-- config.py                Shared JDBC config
-|   |-- job_raster_segment.py    Job 1: NDVI/LST
-|   |-- job_shadow_model.py      Job 2: Shadow ratio
-|   |-- job_traffic_aqi.py       Job 4: Traffic aggregation
-|   |-- job_thermal_comfort.py   Job 3: TCS calculation
-|   |-- job_graph_weight.py      Job 5: Edge weights
-|   +-- utils/                   Solar position, shadow geometry, normalization
-|-- ingestion/                   Data collection scripts
-|-- frontend/                    React + Mantine + Vite
-|   |-- src/
-|   |   |-- components/          MapView, SearchPanel, RoutePanel, CCTVModal
-|   |   |-- pages/               NavigationPage, DashboardPage
-|   |   |-- services/api.ts      Typed API calls
-|   |   +-- types/index.ts       TypeScript interfaces
-|   +-- package.json
+|       +-- schemas.py            Pydantic models
+|-- spark_jobs/                   PySpark + Sedona processing
+|   |-- run_pipeline.py           Full pipeline orchestrator
+|   |-- config.py                 Shared JDBC config
+|   |-- job_raster_segment.py     Job 1: NDVI/LST
+|   |-- job_shadow_model.py       Job 2: Shadow ratio
+|   |-- job_traffic_aqi.py        Job 4: Traffic aggregation
+|   |-- job_thermal_comfort.py    Job 3: TCS calculation
+|   |-- job_graph_weight.py       Job 5: Edge weights
+|   +-- utils/                    Solar position, shadow geometry, normalization
+|-- ingestion/                    Data collection scripts
+|-- frontend/                     Next.js App Router
+|   |-- app/
+|   |   |-- page.tsx              Dashboard page
+|   |   +-- navigasi/page.tsx     Navigation page
+|   |-- components/
+|   |   |-- MapView.tsx            MapLibre GL map (TCS layer, routing, CCTV)
+|   |   |-- SearchPanel.tsx        Origin/destination search
+|   |   |-- RoutePanel.tsx         Route result cards
+|   |   |-- TCSLegend.tsx          TCS grade legend + shared color helpers
+|   |   |-- MapLayerSwitcher.tsx   TCS/UHI layer toggle control
+|   |   +-- CCTVModal.tsx          CCTV stream modal
+|   |-- services/api.ts            Centralized typed API calls
+|   +-- types/index.ts             TypeScript interfaces
 |-- database/
-|   |-- init.sql                 Schema + pgRouting topology function
-|   +-- seed_transit.sql         Transit stops
-|-- docker-compose.yml           3 services: postgres, spark, api
-|-- Dockerfile.api               Python 3.11-slim
-|-- Dockerfile.spark             Spark 3.5 + Sedona JARs
-|-- requirements-docker.txt      API deps
-|-- requirements-spark.txt       Spark deps
-+-- .env.example                 Environment template
+|   |-- init.sql                   Schema + pgRouting topology function
+|   +-- rebuild_topology.sql       Standalone topology rebuild script
+|-- docker-compose.yml             Services: postgres, spark, api, hadoop
+|-- Dockerfile.api                 Python 3.11-slim
+|-- Dockerfile.spark               Spark 3.5 + Sedona JARs
+|-- requirements-docker.txt        API deps
+|-- requirements-spark.txt         Spark deps
++-- .env.example                   Environment template
 ```
 
 ---
@@ -263,7 +356,11 @@ curl -X POST http://localhost:8000/api/route -H "Content-Type: application/json"
 
 - Althoff et al. (2017). Large-scale physical activity data reveal worldwide activity inequality. Nature, 547.
 - Copernicus Climate Change Service. Global Climate Highlights 2024.
-- ITDP Indonesia. Pedoman Integrasi Antarmoda.
+- ITDP Indonesia (2020). Pedoman Teknis Trotoar Terintegrasi dan Integrasi Antarmoda.
+- Kong, L., et al. (2021). Assessment of Pedestrian Thermal Comfort under Different Tree Canopy Configurations in Tropical Urban Environments. Building and Environment, Vol. 195.
+- Teshima, Y., et al. (2021). Microclimate and Pedestrian Thermal Comfort in Tropical High-Density Cities: The Effect of Shade Trees on UTCI. Sustainable Cities and Society, Vol. 72.
+- Santamouris, M. (2020). Recent progress in cool phytotechnologies and pavement cooling to mitigate urban heat island. Solar Energy, Vol. 200.
+- Zardo, F., et al. (2021). Shading paths: A spatial optimization model to minimize pedestrian heat stress along walking routes in hot cities. Landscape and Urban Planning, Vol. 214.
 
 ---
 

@@ -60,13 +60,26 @@ def fetch_current_weather() -> dict:
     print(f"  Radiation: {data['current']['direct_radiation']} W/m2")
 
     # Save to raw storage
-    os.makedirs(WEATHER_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    output_path = os.path.join(WEATHER_DIR, f"weather_{timestamp}.json")
+    filename = f"weather_{timestamp}.json"
+    
+    # Try writing directly to HDFS (Bronze Layer)
+    from ingestion.hdfs_client import write_to_hdfs
+    data_str = json.dumps(data, indent=2)
+    hdfs_path = f"/lakehouse/bronze/weather/{filename}"
+    hdfs_success = write_to_hdfs(hdfs_path, data_str)
+    
+    # Save locally as cache/fallback
+    os.makedirs(WEATHER_DIR, exist_ok=True)
+    output_path = os.path.join(WEATHER_DIR, filename)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-    print(f"  Saved to: {output_path}")
+        f.write(data_str)
+    
+    if hdfs_success:
+        print(f"  Ingested directly to HDFS at: {hdfs_path}")
+    else:
+        print(f"  [HDFS Fallback] Saved locally to: {output_path}")
+        
     return data
 
 

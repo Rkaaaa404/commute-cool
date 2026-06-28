@@ -5,6 +5,7 @@ HLS Stream pattern: http://36.66.208.101:5000/hls/{cctv_id}/stream311.ts
 
 Stores CCTV locations in PostGIS for spatial queries (find nearest CCTV to route).
 """
+from __future__ import annotations
 
 import json
 import os

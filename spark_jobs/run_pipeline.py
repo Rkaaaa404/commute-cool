@@ -76,6 +76,44 @@ def step_1_ingest_apis():
     except Exception as e:
         print(f"  ✗ Traffic fetch failed: {e}")
 
+    # OSM Data (footways, buildings, trees)
+    try:
+        from ingestion.osm_fetcher import fetch_all
+        osm_paths = fetch_all()
+        print(f"  ✓ OSM Data: downloaded to {list(osm_paths.values())}")
+    except Exception as e:
+        print(f"  ✗ OSM fetch failed: {e}")
+
+
+
+def upload_to_hdfs_bronze():
+    """Upload ingested raw local files to HDFS Bronze layer using PySpark."""
+    print("\n" + "=" * 60)
+    print("STEP 1.5: Upload Raw Data to HDFS Bronze Layer")
+    print("=" * 60)
+
+    from pyspark.sql import SparkSession
+    from spark_jobs.config import BRONZE_DIR, RAW_DATA_DIR
+
+    spark = SparkSession.builder.appName("CommuteCool_HDFSUploader").master(os.getenv("SPARK_MASTER_URL", "local[*]")).getOrCreate()
+
+    try:
+        categories = ["weather", "aqi", "traffic"]
+        for cat in categories:
+            local_path = os.path.join(RAW_DATA_DIR, cat)
+            hdfs_path = f"{BRONZE_DIR}/{cat}"
+            if os.path.exists(local_path) and os.listdir(local_path):
+                print(f"  Uploading local {local_path} to HDFS {hdfs_path}...")
+                df = spark.read.text(f"file://{os.path.abspath(local_path)}/*.json")
+                df.write.mode("overwrite").text(hdfs_path)
+                print(f"    ✓ Uploaded {cat} successfully")
+            else:
+                print(f"  ⚠ No local data found for category: {cat}")
+    except Exception as e:
+        print(f"  ✗ HDFS Bronze upload failed: {e}")
+    finally:
+        spark.stop()
+
 
 def step_2_load_osm():
     """Load OSM GeoJSON data into PostGIS."""
@@ -95,8 +133,8 @@ def step_2_load_osm():
         cur = conn.cursor()
         cur.execute("SELECT build_routing_topology();")
         conn.commit()
-        # Check how many nodes were created
-        cur.execute("SELECT COUNT(*) FROM segments_vertices_pgr")
+        # Check how many nodes were created in the noded network
+        cur.execute("SELECT COUNT(*) FROM segments_noded_vertices_pgr")
         node_count = cur.fetchone()[0]
         print(f"  Topology built: {node_count} nodes")
         cur.close()
@@ -371,6 +409,53 @@ def _fallback_edge_weights():
     conn.close()
 
 
+def step_8_ai_simulations():
+    """Run AI/ML Predictive Simulations."""
+    print("\n" + "=" * 60)
+    print("STEP 8: Spark Job 6 - AI/ML Predictive Simulations")
+    print("=" * 60)
+
+    try:
+        from spark_jobs.job_tcs_predictor import train_and_simulate
+        train_and_simulate()
+    except Exception as e:
+        print(f"  Spark Job 6 failed: {e}")
+        traceback.print_exc()
+        print("  Falling back to direct simulation estimation...")
+        _fallback_ai_simulations()
+
+
+def _fallback_ai_simulations():
+    """Compute AI simulations directly in PostgreSQL (fallback)."""
+    import psycopg2
+    db_url = os.getenv("DATABASE_URL", "postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool")
+
+    conn = psycopg2.connect(db_url)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO tcs_simulations 
+            (segment_id, current_tcs, predicted_tcs_green, predicted_tcs_cool, tcs_improvement_green, tcs_improvement_cool)
+        SELECT
+            t.segment_id,
+            t.tcs_value as current_tcs,
+            LEAST(1.0, t.tcs_value + 0.12) as predicted_tcs_green,
+            LEAST(1.0, t.tcs_value + 0.08) as predicted_tcs_cool,
+            LEAST(1.0, t.tcs_value + 0.12) - t.tcs_value as tcs_improvement_green,
+            LEAST(1.0, t.tcs_value + 0.08) - t.tcs_value as tcs_improvement_cool
+        FROM (
+            SELECT DISTINCT ON (segment_id) segment_id, tcs_value
+            FROM thermal_comfort_scores
+            ORDER BY segment_id, computed_at DESC
+        ) t
+    """)
+
+    conn.commit()
+    print(f"  Computed fallback simulations for {cur.rowcount} segments")
+    cur.close()
+    conn.close()
+
+
 def main():
     """Run the full COMMUTE-COOL data pipeline."""
     start_time = time.time()
@@ -387,17 +472,23 @@ def main():
 
     # Run pipeline steps
     step_1_ingest_apis()
+    upload_to_hdfs_bronze()
     step_2_load_osm()
     step_3_ndvi_lst()
     step_4_shadow_model()
     step_5_traffic_aqi()
     step_6_thermal_comfort()
     step_7_graph_weights()
+    step_8_ai_simulations()
 
     elapsed = time.time() - start_time
     print("\n" + "=" * 60)
     print(f"✓ Pipeline complete in {elapsed:.1f}s")
     print("=" * 60)
+
+    # Explicitly exit so that the JVM daemon process doesn't keep the
+    # container alive and inadvertently restart the pipeline in a loop.
+    sys.exit(0)
 
 
 if __name__ == "__main__":
