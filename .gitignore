@@ -42,8 +42,6 @@ data/routing_weights/
 
 # --- Jupyter ---
 .ipynb_checkpoints/
-notebooks/*.ipynb
-!notebooks/.gitkeep
 
 # --- Docker volumes ---
 pgdata/
@@ -58,11 +56,8 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
-# --- Node (jika dashboard pakai npm) ---
+# --- Node ---
 node_modules/
-frontend/dashboard/node_modules/
-frontend/dashboard/dist/
-frontend/dashboard/build/
 
 # --- Logs ---
 *.log
@@ -77,5 +72,6 @@ frontend/.next/
 frontend/out/
 frontend/.vercel/
 
-# --- Backup directories ---
-frontend_vite_backup/
+# --- AWS SAM ---
+.aws-sam/
+samconfig.local.toml

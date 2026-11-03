@@ -10,8 +10,13 @@ Runs the complete Big Data pipeline in sequence:
 7. Spark Job 5: Graph Weight Export (depends on 3)
 
 All Spark jobs run in LOCAL mode (no cluster needed for city-scale data).
+
+Usage:
+    python -m spark_jobs.run_pipeline                # full pipeline
+    python -m spark_jobs.run_pipeline --skip-ingest  # Spark jobs only (reuse data already in DB/HDFS)
 """
 
+import argparse
 import os
 import sys
 import time
@@ -458,6 +463,14 @@ def _fallback_ai_simulations():
 
 def main():
     """Run the full COMMUTE-COOL data pipeline."""
+    parser = argparse.ArgumentParser(description="COMMUTE-COOL data pipeline")
+    parser.add_argument(
+        "--skip-ingest",
+        action="store_true",
+        help="Skip API ingestion, HDFS bronze upload and OSM load; run Spark jobs only",
+    )
+    args = parser.parse_args()
+
     start_time = time.time()
 
     print("╔════════════════════════════════════════════════════════════╗")
@@ -471,9 +484,12 @@ def main():
         sys.exit(1)
 
     # Run pipeline steps
-    step_1_ingest_apis()
-    upload_to_hdfs_bronze()
-    step_2_load_osm()
+    if args.skip_ingest:
+        print("[Pipeline] --skip-ingest: skipping ingestion, HDFS bronze upload and OSM load")
+    else:
+        step_1_ingest_apis()
+        upload_to_hdfs_bronze()
+        step_2_load_osm()
     step_3_ndvi_lst()
     step_4_shadow_model()
     step_5_traffic_aqi()
