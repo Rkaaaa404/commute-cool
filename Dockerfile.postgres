@@ -1,6 +1,9 @@
 FROM postgis/postgis:15-3.3
 
-# Install pgRouting extension
-RUN apt-get update && \
+# The base image is Debian bullseye, which apt.postgresql.org has moved to its
+# archive host; point apt there so pgRouting can still be installed.
+RUN sed -i 's|http://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|' \
+        /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends postgresql-15-pgrouting && \
     rm -rf /var/lib/apt/lists/*
