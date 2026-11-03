@@ -279,6 +279,8 @@ commute-cool/
 |-- api/                          FastAPI backend
 |   |-- main.py                   App entry + CORS + lifespan
 |   |-- lambda_handler.py         AWS Lambda entry point (Mangum)
+|   |-- requirements.txt          API deps (Docker + Lambda)
+|   |-- Makefile                  AWS SAM build for Lambda
 |   |-- db.py                     asyncpg connection pool (env-tunable)
 |   |-- routes/
 |   |   |-- navigation.py         pgRouting route + TCS segments + debug/admin (token-protected)
@@ -312,8 +314,7 @@ commute-cool/
 |-- docs/                         PENCERDASAN.md, DEPLOYMENT.md, Rubrik.csv
 |-- docker-compose.yml            Services: postgres, spark-pipeline, api, hadoop
 |-- Dockerfile.{api,spark,postgres}
-|-- template.yaml, samconfig.toml, Makefile   AWS SAM (Lambda) deployment
-|-- requirements-api.txt          API deps (Docker + Lambda)
+|-- template.yaml, samconfig.toml   AWS SAM (Lambda) deployment
 |-- requirements-spark.txt        Spark container deps
 |-- requirements.txt              Local dev (semua deps + pytest)
 +-- .env.example                  Environment template

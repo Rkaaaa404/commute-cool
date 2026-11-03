@@ -2,7 +2,7 @@
 # COMMUTE-COOL local development dependencies
 # API + ingestion + Spark jobs + tests, for running outside Docker
 # ============================================================
--r requirements-api.txt
+-r api/requirements.txt
 
 # --- Apache Spark & Geospatial ---
 pyspark==3.5.1

@@ -21,9 +21,9 @@ Resources:
   ApiFunction:
     Type: AWS::Serverless::Function
     Metadata:
-      BuildMethod: makefile # see Makefile: packages only api/ + requirements-api.txt
+      BuildMethod: makefile # see api/Makefile: packages api/ + api/requirements.txt
     Properties:
-      CodeUri: .
+      CodeUri: api
       Handler: api.lambda_handler.handler
       Runtime: python3.12
       Architectures: [x86_64]

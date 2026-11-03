@@ -75,3 +75,6 @@ frontend/.vercel/
 # --- AWS SAM ---
 .aws-sam/
 samconfig.local.toml
+
+# --- Supabase CLI cache ---
+supabase/.temp/
