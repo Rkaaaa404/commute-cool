@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 import os
 
-import requests
 import psycopg2
 
-from ingestion.config import DATABASE_URL, OVERPASS_API_URL, SURABAYA_BBOX, TRANSIT_DIR
+from ingestion.config import DATABASE_URL, SURABAYA_BBOX, TRANSIT_DIR
+from ingestion.osm_fetcher import _query_overpass
 
 
 def load_from_seed_sql():
@@ -60,9 +60,7 @@ def fetch_osm_transit_stops() -> list[dict]:
     """
 
     print("[Transit] Fetching transit stops from OSM...")
-    response = requests.post(OVERPASS_API_URL, data={"data": query}, timeout=120)
-    response.raise_for_status()
-    data = response.json()
+    data = _query_overpass(query)
 
     stops = []
     for el in data.get("elements", []):

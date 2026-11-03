@@ -10,11 +10,12 @@ Scope: Surabaya bounding box.
 
 import json
 import os
+import time
 from datetime import datetime
 
 import requests
 
-from ingestion.config import OVERPASS_API_URL, SURABAYA_BBOX, OSM_DIR
+from ingestion.config import OVERPASS_API_URLS, SURABAYA_BBOX, OSM_DIR
 
 
 def _build_overpass_query(element_type: str) -> str:
@@ -66,16 +67,43 @@ def _build_overpass_query(element_type: str) -> str:
 
 
 def _query_overpass(query: str) -> dict:
-    """Execute Overpass API query and return JSON response."""
-    print(f"  Querying Overpass API...")
-    response = requests.post(
-        OVERPASS_API_URL,
-        data={"data": query},
-        headers={"User-Agent": "COMMUTE-COOL/1.0 (academic project)"},
-        timeout=200,
-    )
-    response.raise_for_status()
-    return response.json()
+    """Execute Overpass API query, falling back across mirrors on failure.
+
+    Tries every mirror, up to OVERPASS_RETRY_ROUNDS rounds (default 4), waiting
+    longer between rounds since public mirrors are often briefly overloaded.
+    """
+    last_error = None
+    rounds = int(os.getenv("OVERPASS_RETRY_ROUNDS", "4"))
+    for attempt in range(rounds):
+        if attempt:
+            wait = 30 * attempt
+            print(f"  All Overpass mirrors failed; retrying in {wait}s (round {attempt + 1}/{rounds})...")
+            time.sleep(wait)
+        result = _try_overpass_mirrors(query)
+        if not isinstance(result, Exception):
+            return result
+        last_error = result
+    raise RuntimeError(f"All Overpass mirrors failed; last error: {last_error}")
+
+
+def _try_overpass_mirrors(query: str):
+    """One pass over all mirrors. Returns parsed JSON, or the last exception."""
+    last_error = None
+    for url in OVERPASS_API_URLS:
+        print(f"  Querying Overpass API ({url})...")
+        try:
+            response = requests.post(
+                url,
+                data={"data": query},
+                headers={"User-Agent": "COMMUTE-COOL/1.0 (academic project)"},
+                timeout=200,
+            )
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError) as e:
+            print(f"    ✗ {url} failed: {e}")
+            last_error = e
+    return last_error
 
 
 def _overpass_to_geojson_ways(data: dict, properties_extractor) -> dict:

@@ -32,7 +32,21 @@ TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", "")
 TOMTOM_BASE_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
 
 # --- Overpass API ---
-OVERPASS_API_URL = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+# Public Overpass mirrors are often overloaded (504/429), so several are tried in
+# order. Override with a comma-separated OVERPASS_API_URLS env var.
+OVERPASS_API_URLS = [
+    u.strip()
+    for u in os.getenv(
+        "OVERPASS_API_URLS",
+        "https://z.overpass-api.de/api/interpreter,"
+        "https://lz4.overpass-api.de/api/interpreter,"
+        "https://overpass-api.de/api/interpreter,"
+        "https://overpass.kumi.systems/api/interpreter,"
+        "https://overpass.private.coffee/api/interpreter,"
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    ).split(",")
+    if u.strip()
+]
 
 # --- Database ---
 DATABASE_URL = os.getenv(
