@@ -4,7 +4,7 @@
 
 Studi Kasus: Kota Surabaya | Final Project Big Data | Semester 4
 
-> 📖 **Dokumentasi Teknis Lengkap:** Detail arsitektur E2E, data lakehouse Medallion HDFS, skema database, dan kalkulasi dinamis pgRouting dapat dibaca di berkas **[README_TECHNICAL.md](file:///d:/main-storage/documents/kuliah/sem4/bigdata/fp-dev/README_TECHNICAL.md)**.
+> 📖 **Dokumen terkait:** panduan presentasi & pemahaman teknis E2E di [docs/PENCERDASAN.md](docs/PENCERDASAN.md) · deployment gratis (Vercel + AWS Lambda + Supabase) di [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ---
 
@@ -22,21 +22,6 @@ Fitur utama:
 
 ---
 
-## 🔥 Pembaruan Sesi Terbaru
-
-1. **Routing Fix (0 km Bug):** Penyebab bug ditemukan — `pgr_createTopology` sebelumnya menggunakan tolerance `0.0001°` (11m) yang terlalu kecil sehingga endpoint segmen jalan tidak tergabungkan. Tolerance diupgrade ke `0.0005°` (~55m) → komponen terbesar graph meningkat dari 1.800 ke 21.000+ nodes → routing kini menghasilkan jarak nyata.
-2. **TCS Map Color Grades:** Visualisasi kenyamanan jalan di peta diubah dari gradasi halus ke **4 grade warna kategoris** yang mudah dibaca:
-   - 🔴 **Sangat Panas** (TCS < 0.3) — merah
-   - 🟠 **Panas** (TCS 0.3–0.5) — oranye
-   - 🟡 **Sedang** (TCS 0.5–0.7) — kuning
-   - 🟢 **Nyaman** (TCS ≥ 0.7) — hijau
-3. **TCS Legend di Peta:** Legenda interaktif ditambahkan di pojok kiri bawah peta navigasi.
-4. **Frontend Refactor:** Komponen `TCSLegend`, `MapLayerSwitcher` diekstrak, API_BASE disentralisasi via env var, fungsi warna TCS dikonsistensikan di semua komponen.
-5. **Admin Endpoints:** Ditambahkan `/api/debug/topology-status` dan `POST /api/admin/rebuild-topology` untuk memudahkan diagnosa dan maintenance.
-6. **Cleanup:** Dihapus `frontend_vite_backup/`, `diagnosis-bug.md`, dan test duplikat dari root directory.
-
----
-
 ## Tech Stack
 
 | Layer | Teknologi |
@@ -48,7 +33,7 @@ Fitur utama:
 | Frontend | Next.js (App Router) + TypeScript + Mantine UI + MapLibre |
 | Map | MapLibre GL JS (3D, free, no token) + OpenFreeMap |
 | CCTV | HLS.js + Dishub Surabaya streams |
-| Deployment | Docker Compose (Persistent Volumes) |
+| Deployment | Docker Compose (lokal) · Vercel + AWS Lambda + Supabase (online, lihat [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) |
 
 ### Sumber Data (semua gratis)
 
@@ -157,11 +142,11 @@ Model AI yang telah dilatih digunakan untuk menjalankan simulasi "What-If" pada 
 Hasil prediksi dari kedua skenario ini dibandingkan dengan kondisi asli (`current_tcs`) untuk menghitung persentase potensi perbaikan kenyamanan jalan (`improvement_pct`).
 
 ### Letak Berkas Kode & Implementasi
-*   **Spark ML Pipeline:** [job_tcs_predictor.py](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/spark_jobs/job_tcs_predictor.py) — Melatih model regresi pohon keputusan menggunakan HDFS data lakehouse, menjalankan proyeksi skenario hijau & cool pavement, lalu menyimpannya ke tabel `tcs_simulations` di database PostgreSQL.
-*   **Backend API Endpoints:** [dashboard.py](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/api/routes/dashboard.py) (endpoint `GET /api/dashboard/heat-prediction`) — Menyediakan data statistik agregat kota, tren jam-demi-jam per skenario, dan daftar 50 segmen jalan terpanas (Top 50 Hottest) beserta proyeksi mitigasinya.
+*   **Spark ML Pipeline:** [job_tcs_predictor.py](spark_jobs/job_tcs_predictor.py) — Melatih model regresi pohon keputusan menggunakan HDFS data lakehouse, menjalankan proyeksi skenario hijau & cool pavement, lalu menyimpannya ke tabel `tcs_simulations` di database PostgreSQL.
+*   **Backend API Endpoints:** [dashboard.py](api/routes/dashboard.py) (endpoint `GET /api/dashboard/heat-prediction`) — Menyediakan data statistik agregat kota, tren jam-demi-jam per skenario, dan daftar 50 segmen jalan terpanas (Top 50 Hottest) beserta proyeksi mitigasinya.
 *   **Frontend Dashboard UI:**
-    *   [page.tsx](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/frontend/app/page.tsx) — Integrasi menu tab baru `🔥 Prediksi Panas` dan pemanggilan API.
-    *   [HeatPredictionTab.tsx](file:///c:/Users/asus/OneDrive/Documents/WebDev_BigProject/commute-cool/frontend/components/HeatPredictionTab.tsx) — Halaman dashboard interaktif yang dilengkapi:
+    *   [page.tsx](frontend/app/page.tsx) — Integrasi menu tab baru `🔥 Prediksi Panas` dan pemanggilan API.
+    *   [HeatPredictionTab.tsx](frontend/components/HeatPredictionTab.tsx) — Halaman dashboard interaktif yang dilengkapi:
         *   **Hourly Simulator Slider:** Menggeser jam (06:00 - 21:00 WIB) untuk mensimulasikan kurva temperatur harian Surabaya.
         *   **Scenario Toggles:** Memilih skenario tata kota (Saat Ini, +Pohon, +Cooling) untuk melihat respons perbaikan TCS kota dan jalan terpanas secara real-time.
         *   **Mantine charts & tables:** Visualisasi grafik tren TCS harian kota dan tabel interaktif "Top 20 Zona Terpanas" (menampilkan street name, current TCS, improvements, dan severity status).
@@ -291,48 +276,61 @@ Legenda grade TCS ditampilkan di pojok kiri bawah peta navigasi.
 
 ```
 commute-cool/
-|-- api/                         FastAPI backend
-|   |-- main.py                  App entry + lifespan
-|   |-- db.py                    asyncpg connection pool
+|-- api/                          FastAPI backend
+|   |-- main.py                   App entry + CORS + lifespan
+|   |-- lambda_handler.py         AWS Lambda entry point (Mangum)
+|   |-- db.py                     asyncpg connection pool (env-tunable)
 |   |-- routes/
-|   |   |-- navigation.py        pgRouting route + TCS heatmap + debug/admin
-|   |   |-- dashboard.py         UHI, corridors, walkability
-|   |   +-- cctv.py              CCTV spatial query
-|   +-- models/
-|       +-- schemas.py            Pydantic models
+|   |   |-- navigation.py         pgRouting route + TCS segments + debug/admin (token-protected)
+|   |   |-- dashboard.py          UHI, corridors, walkability, heat prediction
+|   |   +-- cctv.py               CCTV spatial query
+|   +-- models/schemas.py         Pydantic models
 |-- spark_jobs/                   PySpark + Sedona processing
-|   |-- run_pipeline.py           Full pipeline orchestrator
+|   |-- run_pipeline.py           Full pipeline orchestrator (--skip-ingest = Spark jobs only)
 |   |-- config.py                 Shared JDBC config
 |   |-- job_raster_segment.py     Job 1: NDVI/LST
 |   |-- job_shadow_model.py       Job 2: Shadow ratio
-|   |-- job_traffic_aqi.py        Job 4: Traffic aggregation
 |   |-- job_thermal_comfort.py    Job 3: TCS calculation
+|   |-- job_traffic_aqi.py        Job 4: Traffic aggregation
 |   |-- job_graph_weight.py       Job 5: Edge weights
+|   |-- job_tcs_predictor.py      Job 6: AI/ML simulations (MLlib)
 |   +-- utils/                    Solar position, shadow geometry, normalization
-|-- ingestion/                    Data collection scripts
+|-- ingestion/                    Data collection scripts (APIs, OSM, HDFS client, scheduler)
+|-- validation/                   Validasi model bayangan & termal
+|-- tests/                        Unit & e2e tests (pytest)
 |-- frontend/                     Next.js App Router
-|   |-- app/
-|   |   |-- page.tsx              Dashboard page
-|   |   +-- navigasi/page.tsx     Navigation page
-|   |-- components/
-|   |   |-- MapView.tsx            MapLibre GL map (TCS layer, routing, CCTV)
-|   |   |-- SearchPanel.tsx        Origin/destination search
-|   |   |-- RoutePanel.tsx         Route result cards
-|   |   |-- TCSLegend.tsx          TCS grade legend + shared color helpers
-|   |   |-- MapLayerSwitcher.tsx   TCS/UHI layer toggle control
-|   |   +-- CCTVModal.tsx          CCTV stream modal
-|   |-- services/api.ts            Centralized typed API calls
-|   +-- types/index.ts             TypeScript interfaces
+|   |-- app/                      page.tsx (dashboard), navigasi/page.tsx
+|   |-- components/               MapView, SearchPanel, RoutePanel, TCSLegend, CCTVModal, ...
+|   |-- services/api.ts           Centralized typed API calls
+|   +-- types/index.ts            TypeScript interfaces
 |-- database/
-|   |-- init.sql                   Schema + pgRouting topology function
-|   +-- rebuild_topology.sql       Standalone topology rebuild script
-|-- docker-compose.yml             Services: postgres, spark, api, hadoop
-|-- Dockerfile.api                 Python 3.11-slim
-|-- Dockerfile.spark               Spark 3.5 + Sedona JARs
-|-- requirements-docker.txt        API deps
-|-- requirements-spark.txt         Spark deps
-+-- .env.example                   Environment template
+|   |-- init.sql                  Schema + pgRouting topology function
+|   |-- seed_transit.sql          Data halte/stasiun transit
+|   +-- rebuild_topology.sql      Standalone topology rebuild script
+|-- scripts/sync_to_supabase.sh   Snapshot tabel serving lokal -> Supabase
+|-- notebooks/                    Notebook eksplorasi pipeline Big Data & ML
+|-- docs/                         PENCERDASAN.md, DEPLOYMENT.md, Rubrik.csv
+|-- docker-compose.yml            Services: postgres, spark-pipeline, api, hadoop
+|-- Dockerfile.{api,spark,postgres}
+|-- template.yaml, samconfig.toml, Makefile   AWS SAM (Lambda) deployment
+|-- requirements-api.txt          API deps (Docker + Lambda)
+|-- requirements-spark.txt        Spark container deps
+|-- requirements.txt              Local dev (semua deps + pytest)
++-- .env.example                  Environment template
 ```
+
+---
+
+## Deployment (Online, Gratis)
+
+| Layer | Layanan |
+|---|---|
+| Frontend | Vercel (Hobby) |
+| API | AWS Lambda + Function URL (AWS SAM) |
+| Database | Supabase Free (PostGIS + pgRouting) |
+| Pipeline | Tetap lokal via Docker Compose, lalu snapshot ke Supabase |
+
+Langkah lengkap ada di **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ---
 
@@ -340,7 +338,7 @@ commute-cool/
 
 ```powershell
 # Unit tests
-cd ..
+pip install -r requirements.txt
 python -m pytest tests/ -v
 
 # API health check

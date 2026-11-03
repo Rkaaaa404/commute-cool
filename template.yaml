@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: COMMUTE-COOL API - FastAPI on AWS Lambda behind a public Function URL
+
+Parameters:
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: Postgres URL (Supabase transaction pooler, port 6543)
+  CorsOrigins:
+    Type: String
+    Default: "*"
+    Description: Comma-separated allowed origins, e.g. https://commute-cool.vercel.app,http://localhost:3000
+  AdminToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Token for /api/debug and /api/admin endpoints (empty = endpoints disabled)
+
+Resources:
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile # see Makefile: packages only api/ + requirements-api.txt
+    Properties:
+      CodeUri: .
+      Handler: api.lambda_handler.handler
+      Runtime: python3.12
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          DATABASE_URL: !Ref DatabaseUrl
+          CORS_ORIGINS: !Ref CorsOrigins
+          ADMIN_TOKEN: !Ref AdminToken
+          DB_POOL_MIN: "0"
+          DB_POOL_MAX: "3"
+          DB_STATEMENT_CACHE_SIZE: "0" # required by Supabase transaction pooler
+      FunctionUrlConfig:
+        AuthType: NONE # public; CORS is handled by FastAPI, not the Function URL
+
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ApiFunction}
+      RetentionInDays: 14
+
+Outputs:
+  ApiUrl:
+    Description: Public base URL of the API (set NEXT_PUBLIC_API_URL to this + "api")
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl

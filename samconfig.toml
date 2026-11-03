@@ -1,0 +1,16 @@
+# AWS SAM CLI config (no secrets here). Secrets go in --parameter-overrides at deploy time;
+# see docs/DEPLOYMENT.md.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "commute-cool-api"
+region = "ap-southeast-1"
+
+[default.build.parameters]
+use_container = true
+
+[default.deploy.parameters]
+resolve_s3 = true
+s3_prefix = "commute-cool-api"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true

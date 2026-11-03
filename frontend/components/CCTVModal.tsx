@@ -4,7 +4,8 @@ import { useEffect, useRef } from 'react';
 import Hls from 'hls.js';
 import type { CCTVCamera } from '../types';
 
-const DISHUB_HLS_BASE = 'http://36.66.208.101:5000/hls';
+// Proxied via next.config.ts rewrites (avoids HTTP mixed-content on HTTPS deploys)
+const DISHUB_HLS_BASE = '/cctv-hls';
 
 interface Props {
   camera: CCTVCamera | null;
