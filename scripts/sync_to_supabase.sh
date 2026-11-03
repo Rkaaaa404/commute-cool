@@ -110,7 +110,7 @@ local_psql -c "\copy (SELECT DISTINCT ON (segment_id) * FROM thermal_comfort_sco
   | remote_psql -c "\copy thermal_comfort_scores FROM STDIN"
 
 echo "==> ANALYZE + row counts"
-remote_psql -q -c "ANALYZE;"
+remote_psql -q -c "ANALYZE $(IFS=,; echo "${FULL_TABLES[*]}");"
 COUNT_SQL=$(for t in "${FULL_TABLES[@]}"; do printf "SELECT '%s' AS table, count(*) FROM %s UNION ALL " "$t" "$t"; done)
 COUNT_SQL="${COUNT_SQL% UNION ALL }"
 remote_psql -c "$COUNT_SQL;"
