@@ -1,5 +1,5 @@
 /**
- * COMMUTE-COOL API Service
+ * Teduh API Service
  *
  * Semua request ke backend FastAPI terpusat di sini.
  * Base URL dikonfigurasi via environment variable NEXT_PUBLIC_API_URL.

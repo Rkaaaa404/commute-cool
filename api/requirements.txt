@@ -1,5 +1,5 @@
 # ============================================================
-# COMMUTE-COOL API dependencies (FastAPI backend only)
+# Teduh API dependencies (FastAPI backend only)
 # Used by Dockerfile.api (local) and the AWS Lambda build (api/Makefile)
 # ============================================================
 fastapi==0.111.0

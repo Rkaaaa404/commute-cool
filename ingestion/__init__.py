@@ -1,4 +1,4 @@
-"""COMMUTE-COOL Data Ingestion Module.
+"""Teduh Data Ingestion Module.
 
 Handles collection of raw data from external sources:
 - Google Earth Engine (NDVI, LST rasters)

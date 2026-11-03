@@ -1,4 +1,4 @@
-"""COMMUTE-COOL Spark Processing Jobs.
+"""Teduh Spark Processing Jobs.
 
 Batch and micro-batch jobs for geospatial Big Data processing:
 - Job 1: Raster Segmentation (NDVI/LST per street segment)

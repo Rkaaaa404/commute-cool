@@ -26,7 +26,7 @@ export default function Navbar() {
       justify="space-between"
       style={{ borderBottom: '1px solid var(--mantine-color-gray-2)', flexShrink: 0, background: 'white', zIndex: 100 }}
     >
-      <Text fw={700} size="sm" c="teal.7">COMMUTE-COOL</Text>
+      <Text fw={700} size="sm" c="teal.7">Teduh</Text>
       <Tabs value={activeTab} onChange={handleTabChange} variant="pills">
         <Tabs.List>
           <Tabs.Tab value="dashboard" leftSection={<IconChartBar size={14} />}>Dashboard</Tabs.Tab>

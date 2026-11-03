@@ -8,7 +8,7 @@ import { Notifications } from '@mantine/notifications';
 import Navbar from '@/components/Navbar';
 
 export const metadata = {
-  title: 'COMMUTE-COOL',
+  title: 'Teduh',
   description: 'Sistem Navigasi Pejalan Kaki Berbasis Kenyamanan Termal',
 };
 

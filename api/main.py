@@ -1,4 +1,4 @@
-"""COMMUTE-COOL FastAPI Application Entry Point."""
+"""Teduh FastAPI Application Entry Point."""
 
 import os
 from contextlib import asynccontextmanager
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="COMMUTE-COOL API",
+    title="Teduh API",
     description="Thermal-comfort-based pedestrian navigation for Surabaya Smart City",
     version="0.2.0",
     lifespan=lifespan,
@@ -48,14 +48,14 @@ app.include_router(cctv_router, prefix="/api", tags=["CCTV"])
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "ok", "service": "commute-cool-api"}
+    return {"status": "ok", "service": "teduh-api"}
 
 
 @app.get("/")
 async def root():
     """Root endpoint with API info."""
     return {
-        "name": "COMMUTE-COOL API",
+        "name": "Teduh API",
         "version": "0.2.0",
         "docs": "/docs",
         "description": "Thermal comfort pedestrian navigation - Surabaya",

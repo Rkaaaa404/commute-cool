@@ -1,5 +1,5 @@
 -- ============================================================
--- COMMUTE-COOL Seed Data: Transit Stops Surabaya
+-- Teduh Seed Data: Transit Stops Surabaya
 -- Sumber: OpenStreetMap + data publik Suroboyo Bus, Trans Semanggi, KAI
 -- ============================================================
 

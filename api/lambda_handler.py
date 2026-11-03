@@ -1,4 +1,4 @@
-"""AWS Lambda entry point for the COMMUTE-COOL API.
+"""AWS Lambda entry point for the Teduh API.
 
 Lifespan is disabled so the asyncpg pool is not opened/closed on every
 invocation; ``api.db.get_pool()`` creates it lazily and the module-level pool

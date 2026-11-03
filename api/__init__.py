@@ -1,1 +1,1 @@
-"""COMMUTE-COOL FastAPI Backend."""
+"""Teduh FastAPI Backend."""

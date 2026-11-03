@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# COMMUTE-COOL: copy the serving tables from the local PostGIS
+# Teduh: copy the serving tables from the local PostGIS
 # (docker compose "postgres" service) to Supabase.
 #
 # Only the tables the API reads are copied, and thermal_comfort_scores

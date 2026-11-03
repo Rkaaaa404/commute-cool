@@ -1,4 +1,4 @@
-"""Database connection pool for COMMUTE-COOL API.
+"""Database connection pool for Teduh API.
 
 Uses asyncpg for async queries directly (lightweight, no ORM overhead).
 """

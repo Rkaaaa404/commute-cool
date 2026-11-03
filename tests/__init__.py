@@ -1,1 +1,1 @@
-"""COMMUTE-COOL Test Suite."""
+"""Teduh Test Suite."""

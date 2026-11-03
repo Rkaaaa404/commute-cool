@@ -25,7 +25,7 @@ def create_spark_session() -> SparkSession:
     """Create SparkSession with MLlib support."""
     return (
         SparkSession.builder
-        .appName("CommuteCool_MLPredictor")
+        .appName("Teduh_MLPredictor")
         .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
         .config("spark.driver.memory", "2g")
         .getOrCreate()

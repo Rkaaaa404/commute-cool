@@ -159,7 +159,7 @@ def create_scheduler() -> BlockingScheduler:
 def main():
     """Start the scheduler."""
     print("=" * 60)
-    print("  COMMUTE-COOL Job Scheduler")
+    print("  Teduh Job Scheduler")
     print("  Starting all scheduled jobs...")
     print("=" * 60)
     print()

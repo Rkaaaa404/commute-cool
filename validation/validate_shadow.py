@@ -128,7 +128,7 @@ def validate_shadow_length(sample: dict) -> dict:
 def run_validation():
     """Run shadow validation on all sample points."""
     print("=" * 60)
-    print("  COMMUTE-COOL Shadow Model Validation")
+    print("  Teduh Shadow Model Validation")
     print("  Target: IoU >= 80% on 5 sample streets")
     print("=" * 60)
     print()

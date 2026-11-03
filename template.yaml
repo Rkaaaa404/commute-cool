@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: COMMUTE-COOL API - FastAPI on AWS Lambda behind a public Function URL
+Description: Teduh API - FastAPI on AWS Lambda behind a public Function URL
 
 Parameters:
   DatabaseUrl:

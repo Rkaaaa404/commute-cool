@@ -1,4 +1,4 @@
-# COMMUTE-COOL
+# Teduh
 
 **Sistem Navigasi Pejalan Kaki Berbasis Kenyamanan Termal untuk Mendukung Smart City**
 
@@ -10,7 +10,7 @@ Studi Kasus: Kota Surabaya | Final Project Big Data | Semester 4
 
 ## Deskripsi
 
-COMMUTE-COOL membantu pejalan kaki menemukan rute yang bukan hanya tercepat, tetapi juga paling nyaman dari paparan panas matahari. Sistem menggabungkan data cuaca real-time, pemodelan bayangan gedung/pohon, kualitas udara, kepadatan lalu lintas, dan kualitas trotoar untuk menghasilkan Thermal Comfort Score (TCS) per segmen jalan.
+Teduh membantu pejalan kaki menemukan rute yang bukan hanya tercepat, tetapi juga paling nyaman dari paparan panas matahari. Sistem menggabungkan data cuaca real-time, pemodelan bayangan gedung/pohon, kualitas udara, kepadatan lalu lintas, dan kualitas trotoar untuk menghasilkan Thermal Comfort Score (TCS) per segmen jalan.
 
 Fitur utama:
 - **Personal Heat Budget** -- rekomendasi rute disesuaikan dengan toleransi panas pengguna
@@ -52,7 +52,7 @@ Fitur utama:
 
 ## Arsitektur & Medallion HDFS Data Lakehouse
 
-COMMUTE-COOL mengimplementasikan arsitektur **Data Lakehouse** dengan pemisahan layer **Medallion (Bronze, Silver, Gold)** menggunakan **HDFS (Hadoop Distributed File System)** sebagai media penyimpanan Big Data dan **Apache Spark** sebagai engine pemrosesan data terdistribusi.
+Teduh mengimplementasikan arsitektur **Data Lakehouse** dengan pemisahan layer **Medallion (Bronze, Silver, Gold)** menggunakan **HDFS (Hadoop Distributed File System)** sebagai media penyimpanan Big Data dan **Apache Spark** sebagai engine pemrosesan data terdistribusi.
 
 ```
 Docker Compose (HDFS Data Lakehouse + Serving Layer)
@@ -88,7 +88,7 @@ Docker Compose (HDFS Data Lakehouse + Serving Layer)
 
 ## Routing Engine
 
-COMMUTE-COOL menggunakan pgRouting (extension PostgreSQL) untuk graph-based routing di atas jaringan jalan yang telah di-node (`segments_noded`):
+Teduh menggunakan pgRouting (extension PostgreSQL) untuk graph-based routing di atas jaringan jalan yang telah di-node (`segments_noded`):
 
 - **Shortest route**: `pgr_dijkstra` dengan cost = `base_cost` (waktu tempuh standar pejalan kaki tanpa penalti panas).
 - **Most comfortable route**: `pgr_dijkstra` dengan cost = `total_cost` (waktu tempuh standar + penalti paparan panas dinamis berdasarkan toleransi pengguna).
@@ -121,7 +121,7 @@ Setiap tingkat toleransi panas memiliki batas durasi paparan sinar matahari lang
 
 ## Prediksi & Simulasi Panas AI/ML
 
-COMMUTE-COOL mengintegrasikan pemodelan prediktif berbasis machine learning untuk membantu perencana kota menganalisis efektivitas langkah mitigasi panas (UHI) secara interaktif.
+Teduh mengintegrasikan pemodelan prediktif berbasis machine learning untuk membantu perencana kota menganalisis efektivitas langkah mitigasi panas (UHI) secara interaktif.
 
 ### Model Machine Learning (PySpark MLlib)
 *   **Algoritma:** `DecisionTreeRegressor` (dari library `pyspark.ml.regression`).
@@ -275,7 +275,7 @@ Legenda grade TCS ditampilkan di pojok kiri bawah peta navigasi.
 ## Struktur Project
 
 ```
-commute-cool/
+teduh/
 |-- api/                          FastAPI backend
 |   |-- main.py                   App entry + CORS + lifespan
 |   |-- lambda_handler.py         AWS Lambda entry point (Mangum)

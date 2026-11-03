@@ -31,7 +31,7 @@ def create_spark_session() -> SparkSession:
     """Create SparkSession."""
     spark = (
         SparkSession.builder
-        .appName("CommuteCool_GraphWeight")
+        .appName("Teduh_GraphWeight")
         .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.kryo.registrator", SedonaKryoRegistrator.getName)

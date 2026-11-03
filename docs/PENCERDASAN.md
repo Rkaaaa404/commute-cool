@@ -1,13 +1,13 @@
-# 🎓 PENCERDASAN DEMO COMMUTE-COOL
+# 🎓 PENCERDASAN DEMO Teduh
 ## Panduan Utama Presentasi, Alur Arsitektur, Formula Matematis, dan Pemahaman Teknis E2E
 
-Dokumen ini disusun sebagai panduan belajar cepat ("Cheat Sheet") bagi tim untuk menguasai seluruh aspek teoritis, teknis, arsitektur, dan demo sistem **COMMUTE-COOL** saat presentasi di depan dosen/penguji.
+Dokumen ini disusun sebagai panduan belajar cepat ("Cheat Sheet") bagi tim untuk menguasai seluruh aspek teoritis, teknis, arsitektur, dan demo sistem **Teduh** saat presentasi di depan dosen/penguji.
 
 ---
 
 ## 1. Konsep & Latar Belakang Masalah
 *   **Masalah Utama:** Kota Surabaya adalah kota metropolitan dengan paparan panas ekstrem (efek *Urban Heat Island* / UHI). Suhu udara rata-rata yang tinggi dikombinasikan dengan kelembapan tinggi membuat pejalan kaki enggan berjalan di trotoar terbuka karena resiko stres panas (*heat stress*).
-*   **Solusi COMMUTE-COOL:** Membangun mesin navigasi cerdas yang tidak hanya mencari jalur terpendek (shortest path), tetapi jalur ternyaman secara termal (most comfortable path). Mesin ini memadukan data spasial geospasial (OSM), data fisik real-time (cuaca, kemacetan, polusi udara), proyeksi bayangan bangunan 3D, serta model kecerdasan buatan (MLlib) untuk simulasi tata kota.
+*   **Solusi Teduh:** Membangun mesin navigasi cerdas yang tidak hanya mencari jalur terpendek (shortest path), tetapi jalur ternyaman secara termal (most comfortable path). Mesin ini memadukan data spasial geospasial (OSM), data fisik real-time (cuaca, kemacetan, polusi udara), proyeksi bayangan bangunan 3D, serta model kecerdasan buatan (MLlib) untuk simulasi tata kota.
 
 ---
 

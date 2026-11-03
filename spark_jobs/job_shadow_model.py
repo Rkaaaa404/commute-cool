@@ -41,7 +41,7 @@ def create_spark_session() -> SparkSession:
     """Create SparkSession with Sedona enabled."""
     spark = (
         SparkSession.builder
-        .appName("CommuteCool_ShadowModel")
+        .appName("Teduh_ShadowModel")
         .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.kryo.registrator", SedonaKryoRegistrator.getName)

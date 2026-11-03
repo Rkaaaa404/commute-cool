@@ -1,4 +1,4 @@
-"""Configuration for COMMUTE-COOL ingestion layer."""
+"""Configuration for Teduh ingestion layer."""
 
 import os
 from dotenv import load_dotenv

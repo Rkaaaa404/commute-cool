@@ -1,5 +1,5 @@
 # ============================================================
-# COMMUTE-COOL local development dependencies
+# Teduh local development dependencies
 # API + ingestion + Spark jobs + tests, for running outside Docker
 # ============================================================
 -r api/requirements.txt

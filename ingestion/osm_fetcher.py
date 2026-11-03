@@ -95,7 +95,7 @@ def _try_overpass_mirrors(query: str):
             response = requests.post(
                 url,
                 data={"data": query},
-                headers={"User-Agent": "COMMUTE-COOL/1.0 (academic project)"},
+                headers={"User-Agent": "Teduh/1.0 (academic project)"},
                 timeout=200,
             )
             response.raise_for_status()

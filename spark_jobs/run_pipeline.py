@@ -1,4 +1,4 @@
-"""COMMUTE-COOL Full Data Pipeline Orchestrator.
+"""Teduh Full Data Pipeline Orchestrator.
 
 Runs the complete Big Data pipeline in sequence:
 1. Ingestion: Fetch real data from APIs (Open-Meteo, TomTom, WAQI)
@@ -100,7 +100,7 @@ def upload_to_hdfs_bronze():
     from pyspark.sql import SparkSession
     from spark_jobs.config import BRONZE_DIR, RAW_DATA_DIR
 
-    spark = SparkSession.builder.appName("CommuteCool_HDFSUploader").master(os.getenv("SPARK_MASTER_URL", "local[*]")).getOrCreate()
+    spark = SparkSession.builder.appName("Teduh_HDFSUploader").master(os.getenv("SPARK_MASTER_URL", "local[*]")).getOrCreate()
 
     try:
         categories = ["weather", "aqi", "traffic"]
@@ -462,8 +462,8 @@ def _fallback_ai_simulations():
 
 
 def main():
-    """Run the full COMMUTE-COOL data pipeline."""
-    parser = argparse.ArgumentParser(description="COMMUTE-COOL data pipeline")
+    """Run the full Teduh data pipeline."""
+    parser = argparse.ArgumentParser(description="Teduh data pipeline")
     parser.add_argument(
         "--skip-ingest",
         action="store_true",
@@ -474,7 +474,7 @@ def main():
     start_time = time.time()
 
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║   COMMUTE-COOL Big Data Pipeline                         ║")
+    print("║   Teduh Big Data Pipeline                         ║")
     print("║   Apache Spark (Local Mode) + PostGIS + Real APIs        ║")
     print(f"║   {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}                            ║")
     print("╚════════════════════════════════════════════════════════════╝")

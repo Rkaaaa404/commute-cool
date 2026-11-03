@@ -138,7 +138,7 @@ def estimate_system_temperature(sample: dict, air_temp: float = 33.0) -> float:
 def run_validation(air_temp: float = 33.0):
     """Run thermal comfort validation on all measurement points."""
     print("=" * 60)
-    print("  COMMUTE-COOL Thermal Comfort Validation")
+    print("  Teduh Thermal Comfort Validation")
     print(f"  Base air temperature: {air_temp}°C")
     print("  Target: MAE <= 1.5°C across 10 sample points")
     print("=" * 60)

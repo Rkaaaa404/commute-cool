@@ -1,7 +1,7 @@
 {
-  "name": "commute-cool-root",
+  "name": "teduh-root",
   "version": "1.0.0",
-  "description": "COMMUTE-COOL Root Workspace",
+  "description": "Teduh Root Workspace",
   "scripts": {
     "docker:up": "docker compose up -d postgres namenode datanode api",
     "docker:down": "docker compose down",

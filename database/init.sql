@@ -1,5 +1,5 @@
 -- ============================================================
--- COMMUTE-COOL Database Schema Initialization
+-- Teduh Database Schema Initialization
 -- PostgreSQL + PostGIS
 -- ============================================================
 

@@ -26,7 +26,7 @@ def create_spark_session() -> SparkSession:
     """Create SparkSession with Sedona."""
     spark = (
         SparkSession.builder
-        .appName("CommuteCool_TrafficAQI")
+        .appName("Teduh_TrafficAQI")
         .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.kryo.registrator", SedonaKryoRegistrator.getName)
