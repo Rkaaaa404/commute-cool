@@ -1,5 +1,6 @@
 """COMMUTE-COOL FastAPI Application Entry Point."""
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -26,11 +27,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware for frontend access
+# CORS middleware for frontend access.
+# CORS_ORIGINS: comma-separated list of allowed origins (default "*" for local dev).
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

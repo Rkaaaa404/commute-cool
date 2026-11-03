@@ -2,13 +2,27 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, HTTPException, Query
+import os
+import secrets
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from typing import Optional
 
 from api.models.schemas import RouteRequest, RouteResponse
 from api.db import get_conn
 
 router = APIRouter()
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+def require_admin(x_admin_token: Optional[str] = Header(default=None)) -> None:
+    """Guard for debug/admin endpoints.
+
+    Endpoints are hidden (404) unless ADMIN_TOKEN is set and the request carries
+    a matching ``X-Admin-Token`` header.
+    """
+    if not ADMIN_TOKEN or not x_admin_token or not secrets.compare_digest(x_admin_token, ADMIN_TOKEN):
+        raise HTTPException(status_code=404, detail="Not Found")
 
 # Penalty multiplier per heat tolerance level
 # Applies only to the "most_comfortable" route cost calculation.
@@ -328,7 +342,7 @@ async def get_thermal_segments():
     return await get_tcs_segments(None, None, None, None)
 
 
-@router.get("/debug/topology-status")
+@router.get("/debug/topology-status", dependencies=[Depends(require_admin)])
 async def topology_status():
     """Diagnostik status topologi pgRouting.
 
@@ -366,7 +380,7 @@ async def topology_status():
         }
 
 
-@router.post("/admin/rebuild-topology")
+@router.post("/admin/rebuild-topology", dependencies=[Depends(require_admin)])
 async def rebuild_topology():
     """Rebuild pgRouting topology dari tabel segments.
 

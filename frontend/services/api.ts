@@ -204,15 +204,3 @@ export async function fetchHeatPrediction(): Promise<HeatPredictionData | null> 
     return null;
   }
 }
-
-// ── Admin / Debug ─────────────────────────────────────────────────────────────
-
-export async function fetchTopologyStatus(): Promise<Record<string, unknown> | null> {
-  try {
-    const res = await fetch(`${API_BASE}/debug/topology-status`);
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
