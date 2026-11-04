@@ -6,6 +6,14 @@ Teduh menghitung seberapa nyaman setiap ruas jalan di Surabaya untuk dilalui den
 
 🌐 **Coba langsung:** https://teduh-app.vercel.app
 
+<p align="center">
+  <a href="https://teduh-app.vercel.app">
+    <img src="docs/assets/qr-teduh.svg" alt="QR code ke https://teduh-app.vercel.app" width="200">
+  </a>
+  <br>
+  <sub>Pindai untuk membuka Teduh di ponsel</sub>
+</p>
+
 ---
 
 ## Masalahnya
