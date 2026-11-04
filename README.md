@@ -285,4 +285,4 @@ Fitur di atas sudah berjalan. Modul berikut adalah rancangan untuk tahap berikut
 
 ## Tim
 
-Rayka Dharma Pranandita · Evan Christian Nainggolan · Rizqi Akbar Sukirman P.
+Rayka Dharma Pranandita · Evan Christian Nainggolan · Naufal Ardhana
