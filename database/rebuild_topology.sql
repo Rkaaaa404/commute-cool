@@ -3,7 +3,7 @@
 -- Jalankan ini setelah data OSM di-ingested ke tabel segments.
 --
 -- Cara jalankan:
---   docker exec commute_cool_db psql -U cc_user -d commute_cool \
+--   docker exec teduh_db psql -U cc_user -d commute_cool \
 --     -f /tmp/rebuild_topology.sql
 --
 -- Atau via API: POST /api/admin/rebuild-topology

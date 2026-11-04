@@ -21,7 +21,7 @@
 # ============================================================
 set -euo pipefail
 
-DB_CONTAINER="${DB_CONTAINER:-commute_cool_db}"
+DB_CONTAINER="${DB_CONTAINER:-teduh_db}"
 LOCAL_DB="${LOCAL_DB:-commute_cool}"
 LOCAL_USER="${LOCAL_USER:-cc_user}"
 MAX_MB="${MAX_MB:-450}"

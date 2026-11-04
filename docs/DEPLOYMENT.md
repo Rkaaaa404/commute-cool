@@ -39,7 +39,7 @@ The production DB is a **snapshot**: run the pipeline locally, then copy the ser
 ```bash
 cp .env.example .env            # optionally add TOMTOM_API_KEY / WAQI_API_TOKEN
 docker compose up -d --build    # first run: ~10–15 min for the spark-pipeline container
-docker logs -f commute_cool_spark   # wait for "Pipeline complete" / exited (0)
+docker logs -f teduh_spark   # wait for "Pipeline complete" / exited (0)
 ```
 
 ### 3. Snapshot → Supabase
@@ -71,13 +71,13 @@ curl -H "X-Admin-Token: <random-string>" "$API_URL/api/debug/topology-status"
 ### 5. Frontend → Vercel
 1. Vercel → **Add New Project** → import the repo → **Root Directory: `frontend`** (framework auto-detected as Next.js).
 2. Environment variable: `NEXT_PUBLIC_API_URL` = `<ApiUrl>api` (e.g. `https://abc123.lambda-url.ap-southeast-1.on.aws/api`).
-3. Deploy, and note the domain (e.g. `https://commute-cool.vercel.app`).
+3. Deploy, and note the domain (e.g. `https://teduh-app.vercel.app`).
 
 ### 6. Lock CORS to the Vercel domain
 ```bash
 sam deploy --parameter-overrides \
   DatabaseUrl='...6543/postgres' \
-  CorsOrigins='https://commute-cool.vercel.app,http://localhost:3000' \
+  CorsOrigins='https://teduh-app.vercel.app,http://localhost:3000' \
   AdminToken='<random-string>'
 ```
 
@@ -90,8 +90,8 @@ sam deploy --parameter-overrides \
 | Refresh data | `docker compose up spark-pipeline` (or `docker compose run --rm spark-pipeline -m spark_jobs.run_pipeline --skip-ingest`), then `./scripts/sync_to_supabase.sh` |
 | Redeploy API after code changes | `sam build && sam deploy --parameter-overrides ...` (same values as before) |
 | Redeploy frontend | `git push` (Vercel auto-deploys) |
-| API logs | `sam logs --stack-name commute-cool-api --tail` |
-| Tear down API | `sam delete --stack-name commute-cool-api` |
+| API logs | `sam logs --stack-name teduh-api --tail` |
+| Tear down API | `sam delete --stack-name teduh-api` |
 
 ## Environment variables (API)
 

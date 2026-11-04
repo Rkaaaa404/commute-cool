@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    container_name: commute_cool_db
+    container_name: teduh_db
     ports:
       - "5432:5432"
     environment:
@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.spark
-    container_name: commute_cool_spark
+    container_name: teduh_spark
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,7 +56,7 @@ services:
   # ============================================================
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
-    container_name: commute_cool_namenode
+    container_name: teduh_namenode
     ports:
       - "9870:9870"
       - "9000:9000"
@@ -69,7 +69,7 @@ services:
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
-    container_name: commute_cool_datanode
+    container_name: teduh_datanode
     ports:
       - "9864:9864"
     environment:
@@ -88,7 +88,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: commute_cool_api
+    container_name: teduh_api
     ports:
       - "8000:8000"
     depends_on:

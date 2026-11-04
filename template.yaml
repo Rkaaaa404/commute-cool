@@ -10,7 +10,7 @@ Parameters:
   CorsOrigins:
     Type: String
     Default: "*"
-    Description: Comma-separated allowed origins, e.g. https://commute-cool.vercel.app,http://localhost:3000
+    Description: Comma-separated allowed origins, e.g. https://teduh-app.vercel.app,http://localhost:3000
   AdminToken:
     Type: String
     NoEcho: true

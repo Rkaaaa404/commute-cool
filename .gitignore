@@ -78,3 +78,6 @@ samconfig.local.toml
 
 # --- Supabase CLI cache ---
 supabase/.temp/
+
+# Local reference documents (not part of the codebase)
+*.pdf
